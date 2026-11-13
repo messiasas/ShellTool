@@ -1,11 +1,21 @@
 package model;
 
+import avaliacao.Regra;
+
+import java.util.ArrayList;
+import java.util.List;
+
 public class Comando {
 
     private String nome;
     private Plataforma plataforma;
     private String txtComando;
     private String descricao;
+
+    // Regras que decidem OK/ALERTA/FALHA a partir da saída (começa vazia)
+    private List<Regra> regras = new ArrayList<>();
+    // Teste informativo: só mostra dados, o veredito é sempre INFO
+    private boolean informativo = false;
 
     public Comando(String nome, Plataforma plataforma, String textoComando, String descricao) {
         this.nome = nome;
@@ -28,6 +38,27 @@ public class Comando {
 
     public String getDescricao() {
         return descricao;
+    }
+
+    public List<Regra> getRegras() {
+        return regras;
+    }
+
+    public void setRegras(List<Regra> regras) {
+        // guarda uma cópia, para a lista não ser alterada "por fora" sem querer
+        this.regras = new ArrayList<>(regras);
+    }
+
+    public void adicionarRegra(Regra regra) {
+        regras.add(regra);
+    }
+
+    public boolean isInformativo() {
+        return informativo;
+    }
+
+    public void setInformativo(boolean informativo) {
+        this.informativo = informativo;
     }
 
     /*
