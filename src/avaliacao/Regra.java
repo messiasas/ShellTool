@@ -11,6 +11,9 @@ import java.util.regex.PatternSyntaxException;
  * No testes.txt ela fica assim:   falha=re:\b100% packet loss => Sem resposta
  *   - "re:" no começo  -> expressão regular
  *   - " => " separa o padrão do rótulo (opcional)
+ *
+ * Regra de AUSÊNCIA (chave falha_sem): o contrário, gera FALHA quando o padrão NÃO aparece.
+ *   falha_sem=re:(?m)^default => Sem rota
  */
 public class Regra {
 
@@ -22,16 +25,28 @@ public class Regra {
     private final String padrao;
     private final String rotulo;      // pode ser vazio
     private final boolean regex;
+    private final boolean ausencia;   // true = falha_sem: casa quando o padrão NÃO é encontrado
 
     // A expressão regular é compilada só uma vez e reaproveitada
     private Pattern padraoCompilado;
     private boolean regexInvalida = false;
 
     public Regra(Veredito tipo, String padrao, String rotulo, boolean regex) {
+        this(tipo, padrao, rotulo, regex, false);
+    }
+
+    public Regra(Veredito tipo, String padrao, String rotulo, boolean regex, boolean ausencia) {
         this.tipo = tipo;
         this.padrao = padrao;
         this.rotulo = (rotulo == null) ? "" : rotulo.trim();
         this.regex = regex;
+        this.ausencia = ausencia;
+    }
+
+    /* Regra falha_sem: o tipo é sempre FALHA, mesma sintaxe das outras */
+    public static Regra deTextoAusencia(String valor) {
+        Regra base = deTexto(Veredito.FALHA, valor);
+        return new Regra(Veredito.FALHA, base.padrao, base.rotulo, base.regex, true);
     }
 
     /*
@@ -55,6 +70,11 @@ public class Regra {
         return new Regra(tipo, padrao, rotulo, ehRegex);
     }
 
+    /* Chave usada no arquivo: ok, alerta, falha ou falha_sem */
+    public String getChave() {
+        return ausencia ? "falha_sem" : tipo.name().toLowerCase(java.util.Locale.ROOT);
+    }
+
     /* Caminho inverso do deTexto: o valor que vai depois do "ok=", "alerta=" ou "falha=" */
     public String paraTexto() {
         String texto = (regex ? PREFIXO_REGEX : "") + padrao;
@@ -67,6 +87,7 @@ public class Regra {
     /*
      * Procura o padrão na saída.
      * Devolve o detalhe (rótulo, ou a linha que casou) se casar; null se não casar.
+     * Na regra de ausência é o contrário: "casa" quando o padrão NÃO foi encontrado.
      */
     public String verificar(String saida) {
         int posicao = -1;
@@ -82,6 +103,13 @@ public class Regra {
             }
         } else {
             posicao = saida.indexOf(padrao); // "contém", diferenciando maiúsculas/minúsculas
+        }
+
+        if (ausencia) {
+            if (posicao >= 0 || (regex && compilar() == null)) {
+                return null; // encontrou (ou regex inválida): a regra não se aplica
+            }
+            return rotulo.isEmpty() ? "Não encontrado: " + padrao : rotulo;
         }
 
         if (posicao < 0) {
@@ -138,8 +166,12 @@ public class Regra {
         return regex;
     }
 
+    public boolean isAusencia() {
+        return ausencia;
+    }
+
     @Override
     public String toString() {
-        return tipo + ": " + paraTexto();
+        return (ausencia ? "FALHA_SEM" : tipo.name()) + ": " + paraTexto();
     }
 }

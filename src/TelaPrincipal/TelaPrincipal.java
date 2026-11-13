@@ -8,10 +8,12 @@ import avaliacao.ResultadoAvaliado;
 import avaliacao.Veredito;
 import conexao.ColetorRetorno;
 import conexao.ConexaoTelnet;
+import conexao.MontadorComandoAT;
 import model.Comando;
 import model.Plataforma;
 import model.ResultadoExecucao;
 import model.StatusExecucao;
+import model.TipoComando;
 import persistencia.RepositorioHistorico;
 import persistencia.RepositorioTestes;
 
@@ -64,6 +66,7 @@ public class TelaPrincipal extends JFrame{
     private JTextField campoLivre;
     private JButton botaoEnviarLivre;
     private JButton botaoSalvarTeste;
+    private JCheckBox caixaAt; // marcada: o texto do campo livre é um comando AT para o modem
 
     // Persistência dos testes no arquivo testes.txt
     private RepositorioTestes repositorio = new RepositorioTestes();
@@ -82,6 +85,7 @@ public class TelaPrincipal extends JFrame{
 
     // Dados da execução em andamento (usados quando ela termina)
     private Comando execucaoAtualTeste;           // null = comando livre ou PN/SN
+    private TipoComando execucaoAtualTipo = TipoComando.SHELL; // AT também no comando livre com a caixa marcada
     private String execucaoAtualNome;             // nome exibido na tabela
     private String execucaoAtualIdentificacao;    // "PN", "SN" ou null
     private Comando ultimoTeste;                  // teste da última execução (para "Criar regra")
@@ -256,6 +260,11 @@ public class TelaPrincipal extends JFrame{
         painelInferior.add(campoLivre, BorderLayout.CENTER); // CENTER ocupa todo o espaço que sobra
 
         JPanel painelBotoesLivre = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        // Caixa "AT" logo depois do campo: marcada, o texto é enviado ao modem (ver MontadorComandoAT)
+        caixaAt = new JCheckBox("AT");
+        caixaAt.setToolTipText("Envia o texto como comando AT pela porta " + MontadorComandoAT.PORTA_AT);
+        painelBotoesLivre.add(caixaAt);
+        painelBotoesLivre.add(Box.createHorizontalStrut(10));
         botaoEnviarLivre = new JButton("Enviar livre");
         botaoSalvarTeste = new JButton("Salvar como teste");
         painelBotoesLivre.add(botaoEnviarLivre);
@@ -425,7 +434,10 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        campoComando.setText(selecionado.getTxtComando());
+        // teste AT: mostra também a porta usada, como na área de retorno
+        campoComando.setText(selecionado.isAt()
+                ? MontadorComandoAT.textoExibicao(selecionado.getTxtComando())
+                : selecionado.getTxtComando());
         areaDescricao.setText(selecionado.getDescricao());
     }
     private void enviarComando() {
@@ -450,7 +462,8 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        executar(selecionado.getTxtComando(), selecionado, selecionado.getNome(), null);
+        executar(selecionado.getTxtComando(), selecionado.getTipo(), selecionado.getEsperaSegundos(),
+                selecionado, selecionado.getNome(), null);
     }
 
     // Envia o texto digitado no campo "Comando livre", com as mesmas verificações do enviarComando
@@ -478,8 +491,9 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        // comando livre não é um teste salvo: Comando = null
-        if (executar(texto, null, "Livre: " + cortar(texto, 40), null)) {
+        // comando livre não é um teste salvo: Comando = null; o tipo vem da caixa "AT"
+        TipoComando tipo = caixaAt.isSelected() ? TipoComando.AT : TipoComando.SHELL;
+        if (executar(texto, tipo, Comando.ESPERA_PADRAO, null, "Livre: " + cortar(texto, 40), null)) {
             campoLivre.setText(""); // limpa o campo depois de enviar
         }
     }
@@ -492,11 +506,30 @@ public class TelaPrincipal extends JFrame{
      * Devolve true se o envio deu certo.
      */
     private boolean executar(String textoComando, Comando teste, String nomeExibicao, String identificacao) {
+        return executar(textoComando, TipoComando.SHELL, Comando.ESPERA_PADRAO, teste, nomeExibicao, identificacao);
+    }
+
+    /*
+     * Versão com o tipo: no AT, textoComando é só o comando (ex.: AT+CSQ) e
+     * a linha de shell que fala com o modem é montada aqui, antes do marcador de fim.
+     */
+    private boolean executar(String textoComando, TipoComando tipo, int esperaSegundos,
+                             Comando teste, String nomeExibicao, String identificacao) {
         int numero = ++contadorExecucao; // 1, 2, 3...
-        String linha = ColetorRetorno.montarLinhaComMarcador(textoComando, numero);
+
+        String linhaShell = textoComando;   // o que vai para o shell (antes do marcador)
+        String textoExibido = textoComando; // o que aparece no "> ..." e no histórico
+        int tempoLimite = TEMPO_LIMITE_MS;
+        if (tipo == TipoComando.AT) {
+            linhaShell = MontadorComandoAT.montarLinha(textoComando, esperaSegundos);
+            textoExibido = MontadorComandoAT.textoExibicao(textoComando);
+            // a linha AT demora 1 s + a espera: soma isso ao limite, para não estourar o tempo
+            tempoLimite += (1 + esperaSegundos) * 1000;
+        }
+        String linha = ColetorRetorno.montarLinhaComMarcador(linhaShell, numero);
 
         garantirQuebraDeLinha();
-        exibirTexto("> " + textoComando + "\n"); // cabeçalho, sem o marcador
+        exibirTexto("> " + textoExibido + "\n"); // cabeçalho, sem o marcador (e sem a linha montada)
 
         try {
             conexao.enviar(linha);
@@ -507,10 +540,12 @@ public class TelaPrincipal extends JFrame{
 
         // Pode iniciar o coletor DEPOIS de enviar: a resposta só é processada em
         // mostrarRetorno, que roda na EDT, e a EDT está ocupada com este método agora.
-        coletor.iniciar(numero, textoComando);
+        coletor.iniciar(numero, textoExibido);
         execucaoAtualTeste = teste;
+        execucaoAtualTipo = tipo;
         execucaoAtualNome = nomeExibicao;
         execucaoAtualIdentificacao = identificacao;
+        timerLimite.setInitialDelay(tempoLimite); // restart() usa o initialDelay
         timerLimite.restart();
         atualizarBotoesExecucao();
         return true;
@@ -611,7 +646,7 @@ public class TelaPrincipal extends JFrame{
                 }
             }
         } else {
-            avaliacao = avaliador.avaliar(execucaoAtualTeste, resultado);
+            avaliacao = avaliador.avaliar(execucaoAtualTeste, execucaoAtualTipo, resultado);
         }
 
         ExecucaoAvaliada execucao = new ExecucaoAvaliada(LocalTime.now().withNano(0),
@@ -953,6 +988,7 @@ public class TelaPrincipal extends JFrame{
         }
 
         Plataforma plataforma = (Plataforma) boxPlataforma.getSelectedItem();
+        boolean ehAt = caixaAt.isSelected(); // caixa "AT" marcada: salva com tipo=AT
 
         // Painel com dois campos, mostrado dentro do JOptionPane
         JTextField campoNome = new JTextField(25);
@@ -967,7 +1003,7 @@ public class TelaPrincipal extends JFrame{
         // repete o diálogo até o usuário informar um nome ou cancelar
         while (true) {
             int opcao = JOptionPane.showConfirmDialog(this, painel,
-                    "Salvar como teste (" + plataforma + ")",
+                    "Salvar como teste (" + plataforma + (ehAt ? ", AT" : "") + ")",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
                 return; // cancelou
@@ -980,6 +1016,9 @@ public class TelaPrincipal extends JFrame{
         }
 
         Comando novo = new Comando(nome, plataforma, texto, campoDescricao.getText().trim());
+        if (ehAt) {
+            novo.setTipo(TipoComando.AT);
+        }
 
         // trabalha numa cópia: se a gravação falhar, a lista em memória não muda
         List<Comando> novaLista = new ArrayList<>(todosComandos);
@@ -1085,6 +1124,8 @@ public class TelaPrincipal extends JFrame{
         // as regras e o "informativo" passam para o novo objeto
         editado.setRegras(selecionado.getRegras());
         editado.setInformativo(selecionado.isInformativo());
+        editado.setTipo(selecionado.getTipo());
+        editado.setEsperaSegundos(selecionado.getEsperaSegundos());
 
         List<Comando> novaLista = new ArrayList<>(todosComandos);
         int indice = novaLista.indexOf(selecionado);
