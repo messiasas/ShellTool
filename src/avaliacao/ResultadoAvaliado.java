@@ -1,6 +1,5 @@
 package avaliacao;
 
-/* O que o avaliador concluiu: o veredito e um detalhe curto explicando o porquê */
 public class ResultadoAvaliado {
 
     private final Veredito veredito;

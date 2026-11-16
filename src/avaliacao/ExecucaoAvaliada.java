@@ -4,14 +4,10 @@ import model.ResultadoExecucao;
 
 import java.time.LocalTime;
 
-/*
- * Uma linha da tabela de resultados (e do registro):
- * quando terminou, o nome exibido, o resultado bruto e a avaliação.
- */
 public class ExecucaoAvaliada {
 
     private final LocalTime hora;
-    private final String nomeTeste;          // nome do teste, "Livre: ...", "PN" ou "SN"
+    private final String nomeTeste;
     private final ResultadoExecucao resultado;
     private final ResultadoAvaliado avaliacao;
 

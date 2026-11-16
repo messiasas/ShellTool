@@ -1,37 +1,45 @@
 package avaliacao;
 
+import model.Plataforma;
+
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/*
- * Uma sessão de "Registrar teste": guarda início, PN, SN e todas as execuções
- * concluídas enquanto o registro estiver ativo.
- */
 public class RegistroTeste {
 
     public static final String NAO_IDENTIFICADO = "não identificado";
 
     private final LocalDateTime inicio;
-    private String pn; // null enquanto ainda não foi lido
+    private final Plataforma plataforma;
+    private final String alvo;
+    private String pn;
     private String sn;
     private final List<ExecucaoAvaliada> execucoes = new ArrayList<>();
 
-    public RegistroTeste(LocalDateTime inicio) {
+    public RegistroTeste(LocalDateTime inicio, Plataforma plataforma, String alvo) {
         this.inicio = inicio;
+        this.plataforma = plataforma;
+        this.alvo = alvo;
+    }
+
+    public Plataforma getPlataforma() {
+        return plataforma;
+    }
+
+    public String getAlvo() {
+        return alvo;
     }
 
     public void adicionar(ExecucaoAvaliada execucao) {
         execucoes.add(execucao);
     }
 
-    /* Lista só para leitura: quem chama não consegue alterar a lista interna */
     public List<ExecucaoAvaliada> getExecucoes() {
         return Collections.unmodifiableList(execucoes);
     }
 
-    /* Quantas execuções tiveram este veredito (usado no "Resumo") */
     public int contar(Veredito veredito) {
         int total = 0;
         for (ExecucaoAvaliada e : execucoes) {

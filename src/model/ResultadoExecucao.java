@@ -1,14 +1,10 @@
 package model;
 
-/*
- * Resultado de UMA execução de comando no terminal.
- * Todos os campos são final: depois de criado, o resultado não muda (objeto imutável).
- */
 public class ResultadoExecucao {
 
-    private final String textoComando;   // comando original, sem o marcador
-    private final String saida;          // saída limpa (sem eco, marcador e prompt)
-    private final Integer codigoSaida;   // valor de $? ; null se o marcador não chegou
+    private final String textoComando;
+    private final String saida;
+    private final Integer codigoSaida;
     private final long duracaoMs;
     private final StatusExecucao status;
 
@@ -29,7 +25,6 @@ public class ResultadoExecucao {
         return saida;
     }
 
-    /* Integer (e não int) porque pode ser null: int não aceita "sem valor" */
     public Integer getCodigoSaida() {
         return codigoSaida;
     }

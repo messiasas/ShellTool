@@ -11,7 +11,6 @@ import java.util.function.Consumer;
 
 public class ConexaoTelnet {
 
-    // Bytes de controle do protocolo Telnet
     private static final int IAC  = 255;
     private static final int DONT = 254;
     private static final int WILL = 251;
@@ -42,7 +41,6 @@ public class ConexaoTelnet {
         saida.flush();
     }
 
-    // Envia bytes "crus", sem acrescentar \r\n (usado no Ctrl+C = byte 0x03)
     public void enviarBytes(byte[] bytes) throws IOException {
         saida.write(bytes);
         saida.flush();
@@ -50,8 +48,8 @@ public class ConexaoTelnet {
 
     private void lerContinuamente(Consumer<String> aoReceber, Runnable aoDesconectar) {
         byte[] buffer = new byte[1024];
-        int estado = 0; // 0 = texto normal, 1 = após IAC, 2 = esperando opção,
-        // 3 = dentro de SB, 4 = IAC dentro de SB
+        // 0 = texto, 1 = após IAC, 2 = opção, 3 = dentro de SB, 4 = IAC em SB, 5 = após ESC, 6 = dentro de ESC[
+        int estado = 0;
         try {
             int lidos;
             while ((lidos = entrada.read(buffer)) != -1) {
@@ -93,10 +91,10 @@ public class ConexaoTelnet {
                         case 4:
                             estado = (b == SE) ? 0 : 3;
                             break;
-                        case 5: // logo após ESC
+                        case 5:
                             estado = (b == '[') ? 6 : 0;
                             break;
-                        case 6: // dentro de ESC[ ... até a letra final
+                        case 6:
                             if (b >= 0x40 && b <= 0x7E) {
                                 estado = 0;
                             }
@@ -109,7 +107,6 @@ public class ConexaoTelnet {
                 }
             }
         } catch (IOException e) {
-            // o socket foi fechado
         }
         aoDesconectar.run();
     }
@@ -120,7 +117,6 @@ public class ConexaoTelnet {
                 socket.close();
             }
         } catch (IOException e) {
-            // ao fechar, um erro não importa
         }
         socket = null;
     }

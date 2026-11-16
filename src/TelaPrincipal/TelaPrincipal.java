@@ -7,6 +7,7 @@ import avaliacao.RegistroTeste;
 import avaliacao.ResultadoAvaliado;
 import avaliacao.Veredito;
 import conexao.ColetorRetorno;
+import conexao.ConexaoAdb;
 import conexao.ConexaoTelnet;
 import conexao.MontadorComandoAT;
 import model.Comando;
@@ -14,6 +15,7 @@ import model.Plataforma;
 import model.ResultadoExecucao;
 import model.StatusExecucao;
 import model.TipoComando;
+import persistencia.Configuracao;
 import persistencia.RepositorioHistorico;
 import persistencia.RepositorioTestes;
 
@@ -40,7 +42,7 @@ import java.util.regex.PatternSyntaxException;
 public class TelaPrincipal extends JFrame{
 
     private JComboBox<Plataforma> boxPlataforma;
-    private DefaultListModel<Comando> modeloLista; // guarda os comandos no objeto
+    private DefaultListModel<Comando> modeloLista;
     private JList<Comando> listaComandos;
     private List<Comando> todosComandos = new ArrayList<>();
 
@@ -50,8 +52,8 @@ public class TelaPrincipal extends JFrame{
     private JTextArea areaRetorno;
     private JButton botaoEnviar;
     private JButton botaoLimpar;
-    private JButton botaoEditar;  // altera nome, comando e descrição do teste selecionado
-    private JButton botaoExcluir; // remove o teste selecionado da lista e do arquivo
+    private JButton botaoEditar;
+    private JButton botaoExcluir;
 
     private JTextField campoHost;
     private JTextField campoPorta;
@@ -61,61 +63,73 @@ public class TelaPrincipal extends JFrame{
 
     private JTextField campoLogin;
     private boolean loginEnviado = false;
+    private String enderecoConectado = "";
 
-    // Comando livre: texto digitado na hora, que pode ser enviado ou salvo como teste
+    private Configuracao configuracao = new Configuracao();
+
+    private CardLayout cartoesConexao;
+    private JPanel painelConexao;
+
+    private ConexaoAdb conexaoAdb;
+    private JComboBox<String> boxDispositivo;
+    private JButton botaoAtualizar;
+    private JLabel labelStatusAndroid;
+    private boolean listandoDispositivos = false;
+
+    private boolean adbEmAndamento = false;
+    private int numeroAdbAtual;
+    private String textoAdbAtual;
+    private long inicioAdbNanos;
+    private final StringBuilder saidaAdb = new StringBuilder();
+
     private JTextField campoLivre;
     private JButton botaoEnviarLivre;
     private JButton botaoSalvarTeste;
-    private JCheckBox caixaAt; // marcada: o texto do campo livre é um comando AT para o modem
+    private JCheckBox caixaAt;
 
-    // Persistência dos testes no arquivo testes.txt
     private RepositorioTestes repositorio = new RepositorioTestes();
-    // fica false se a leitura do arquivo falhar, para não sobrescrevê-lo com uma lista incompleta
     private boolean arquivoCarregado = false;
 
-    // Tempo máximo de uma execução, em milissegundos. Para mudar, altere só este valor.
     private static final int TEMPO_LIMITE_MS = 30_000;
 
-    // Controle das execuções: uma por vez, cada uma com número sequencial
     private ColetorRetorno coletor = new ColetorRetorno();
     private int contadorExecucao = 0;
-    private Timer timerLimite;          // javax.swing.Timer: dispara na EDT
+    private Timer timerLimite;
     private JButton botaoCancelar;
     private ResultadoExecucao ultimoResultado;
 
-    // Dados da execução em andamento (usados quando ela termina)
-    private Comando execucaoAtualTeste;           // null = comando livre ou PN/SN
-    private TipoComando execucaoAtualTipo = TipoComando.SHELL; // AT também no comando livre com a caixa marcada
-    private String execucaoAtualNome;             // nome exibido na tabela
-    private String execucaoAtualIdentificacao;    // "PN", "SN" ou null
-    private Comando ultimoTeste;                  // teste da última execução (para "Criar regra")
+    private Comando execucaoAtualTeste;
+    private TipoComando execucaoAtualTipo = TipoComando.SHELL;
+    private String execucaoAtualNome;
+    private String execucaoAtualIdentificacao;
+    private Comando ultimoTeste;
 
-    // Avaliação e painel de resultados
     private AvaliadorResultado avaliador = new AvaliadorResultado();
     private JButton botaoCriarRegra;
     private DefaultTableModel modeloResultados;
     private JTable tabelaResultados;
-    private List<ExecucaoAvaliada> linhasResultados = new ArrayList<>(); // mesma ordem das linhas da tabela
+    private List<ExecucaoAvaliada> linhasResultados = new ArrayList<>();
     private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:mm:ss");
 
-    // Registro de teste (histórico)
     private RepositorioHistorico repositorioHistorico = new RepositorioHistorico();
-    private RegistroTeste registroAtual;          // null = não está gravando
+    private RegistroTeste registroAtual;
     private JButton botaoRegistrar;
     private JButton botaoEncerrar;
     private JButton botaoLimparResultados;
     private JLabel labelGravando;
     private JLabel labelPnSn;
 
-    // Fila de comandos que esperam a vez de executar (uma execução por vez)
     private Deque<ComandoPendente> filaComandos = new ArrayDeque<>();
 
-    /* Um item da fila: o texto a enviar e se é a leitura do PN ou do SN */
     private static class ComandoPendente {
+        final Plataforma plataforma;
+        final String serial;
         final String texto;
         final String identificacao;
 
-        ComandoPendente(String texto, String identificacao) {
+        ComandoPendente(Plataforma plataforma, String serial, String texto, String identificacao) {
+            this.plataforma = plataforma;
+            this.serial = serial;
             this.texto = texto;
             this.identificacao = identificacao;
         }
@@ -123,47 +137,68 @@ public class TelaPrincipal extends JFrame{
 
     public TelaPrincipal(){
         setTitle("ShellTool");
-        setSize(1280, 720); // maior, para caber o painel de resultados
+        setSize(1280, 720);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
 
-        // topo: label + setinha
+        carregarConfiguracao();
+        conexaoAdb = new ConexaoAdb(configuracao.getAdb());
+        // Ao fechar o programa, não deixa um adb rodando sozinho
+        Runtime.getRuntime().addShutdownHook(new Thread(conexaoAdb::cancelar));
+
         JPanel painelTopo = new JPanel(new FlowLayout(FlowLayout.LEFT));
         painelTopo.add(new JLabel("Plataforma"));
         boxPlataforma = new JComboBox<>(Plataforma.values());
         painelTopo.add(boxPlataforma);
 
         painelTopo.add(Box.createHorizontalStrut(20));
-        painelTopo.add(new JLabel("IP:"));
+
+        JPanel cartaoProlin = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        cartaoProlin.add(new JLabel("IP:"));
         campoHost = new JTextField(15);
-        painelTopo.add(campoHost);
+        cartaoProlin.add(campoHost);
 
-        painelTopo.add(new JLabel("Porta:"));
+        cartaoProlin.add(new JLabel("Porta:"));
         campoPorta = new JTextField("2323", 5);
-        painelTopo.add(campoPorta);
+        cartaoProlin.add(campoPorta);
 
-        painelTopo.add(new JLabel("Login:"));
+        cartaoProlin.add(new JLabel("Login:"));
         campoLogin = new JTextField(10);
-        painelTopo.add(campoLogin);
+        cartaoProlin.add(campoLogin);
 
         botaoConectar = new JButton("Conectar");
-        painelTopo.add(botaoConectar);
+        cartaoProlin.add(botaoConectar);
 
         labelStatus = new JLabel("Desconectado");
         labelStatus.setForeground(Color.RED);
-        painelTopo.add(labelStatus);
+        cartaoProlin.add(labelStatus);
+
+        JPanel cartaoAndroid = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        cartaoAndroid.add(new JLabel("Dispositivo:"));
+        boxDispositivo = new JComboBox<>();
+        boxDispositivo.setPrototypeDisplayValue("XXXXXXXXXXXXXXXXXXXX");
+        cartaoAndroid.add(boxDispositivo);
+        botaoAtualizar = new JButton("Atualizar");
+        cartaoAndroid.add(botaoAtualizar);
+        labelStatusAndroid = new JLabel(" ");
+        cartaoAndroid.add(labelStatusAndroid);
+
+        // CardLayout: um cartão por plataforma no mesmo lugar; show(painel, plataforma.name()) troca o visível
+        cartoesConexao = new CardLayout();
+        painelConexao = new JPanel(cartoesConexao);
+        painelConexao.add(cartaoProlin, Plataforma.PROLIN.name());
+        painelConexao.add(cartaoAndroid, Plataforma.ANDROID.name());
+        painelTopo.add(painelConexao);
 
         add(painelTopo, BorderLayout.NORTH);
 
-        // Esquerda: lista de comandos
         modeloLista = new DefaultListModel<>();
         listaComandos = new JList<>(modeloLista);
         JScrollPane scrollLista = new JScrollPane(listaComandos);
         scrollLista.setPreferredSize(new Dimension(180, 0));
         add(scrollLista, BorderLayout.WEST);
 
-        // Centro: detalhes do comando selecionado
         JPanel painelDetalhes = new JPanel();
         painelDetalhes.setLayout(new BoxLayout(painelDetalhes, BoxLayout.Y_AXIS));
         painelDetalhes.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
@@ -191,13 +226,11 @@ public class TelaPrincipal extends JFrame{
 
         painelDetalhes.add(Box.createVerticalStrut(10));
 
-        // Botões
         JPanel painelBotoes = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         botaoEnviar = new JButton("Enviar");
         botaoLimpar = new JButton("Limpar retorno");
         painelBotoes.add(botaoEnviar);
         painelBotoes.add(Box.createHorizontalStrut(10));
-        // Cancelar: só fica habilitado enquanto há uma execução em andamento
         botaoCancelar = new JButton("Cancelar");
         botaoCancelar.setEnabled(false);
         painelBotoes.add(botaoCancelar);
@@ -215,7 +248,6 @@ public class TelaPrincipal extends JFrame{
 
         painelDetalhes.add(Box.createVerticalStrut(10));
 
-        // Área de retorno (esquerda): rótulo + botão "Criar regra da seleção" + saída crua
         JPanel painelRetorno = new JPanel(new BorderLayout(0, 4));
         JPanel topoRetorno = new JPanel(new BorderLayout());
         topoRetorno.add(new JLabel("Retorno:"), BorderLayout.WEST);
@@ -229,40 +261,31 @@ public class TelaPrincipal extends JFrame{
         JScrollPane scrollRetorno = new JScrollPane(areaRetorno);
         painelRetorno.add(scrollRetorno, BorderLayout.CENTER);
 
-        // Painel de resultados (direita)
         JPanel painelResultados = criarPainelResultados();
 
-        // Os dois lados com o mesmo tamanho preferido: a divisória começa no meio
         painelRetorno.setPreferredSize(new Dimension(400, 300));
         painelResultados.setPreferredSize(new Dimension(400, 300));
         painelRetorno.setMinimumSize(new Dimension(150, 100));
         painelResultados.setMinimumSize(new Dimension(150, 100));
 
-        // JSplitPane: dois painéis lado a lado com uma divisória que o usuário arrasta
         JSplitPane divisao = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, painelRetorno, painelResultados);
-        divisao.setResizeWeight(0.5);      // ao aumentar a janela, os dois lados crescem por igual
-        divisao.setContinuousLayout(true); // redesenha enquanto arrasta
+        divisao.setResizeWeight(0.5);
+        divisao.setContinuousLayout(true);
         divisao.setAlignmentX(Component.LEFT_ALIGNMENT);
         painelDetalhes.add(divisao);
-        // garante a divisória no meio depois que a janela já tem tamanho na tela
         SwingUtilities.invokeLater(() -> divisao.setDividerLocation(0.5));
 
-
-        // Parte inferior da janela: comando livre numa linha só, como a linha de um terminal
-        // [Comando livre:] [ campo que estica .................. ] [Enviar livre] [Salvar como teste]
-        JPanel painelInferior = new JPanel(new BorderLayout(8, 0)); // 8 px entre as regiões
+        JPanel painelInferior = new JPanel(new BorderLayout(8, 0));
         painelInferior.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
 
         painelInferior.add(new JLabel("Comando livre:"), BorderLayout.WEST);
 
         campoLivre = new JTextField();
         campoLivre.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
-        painelInferior.add(campoLivre, BorderLayout.CENTER); // CENTER ocupa todo o espaço que sobra
+        painelInferior.add(campoLivre, BorderLayout.CENTER);
 
         JPanel painelBotoesLivre = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        // Caixa "AT" logo depois do campo: marcada, o texto é enviado ao modem (ver MontadorComandoAT)
         caixaAt = new JCheckBox("AT");
-        caixaAt.setToolTipText("Envia o texto como comando AT pela porta " + MontadorComandoAT.PORTA_AT);
         painelBotoesLivre.add(caixaAt);
         painelBotoesLivre.add(Box.createHorizontalStrut(10));
         botaoEnviarLivre = new JButton("Enviar livre");
@@ -272,8 +295,6 @@ public class TelaPrincipal extends JFrame{
         painelBotoesLivre.add(botaoSalvarTeste);
         painelInferior.add(painelBotoesLivre, BorderLayout.EAST);
 
-        // Painel central = detalhes em cima + comando livre embaixo.
-        // Fica no CENTER da janela, então a lista de testes (WEST) continua do topo até o fim.
         JPanel painelCentral = new JPanel(new BorderLayout());
         painelCentral.add(painelDetalhes, BorderLayout.CENTER);
         painelCentral.add(painelInferior, BorderLayout.SOUTH);
@@ -282,7 +303,8 @@ public class TelaPrincipal extends JFrame{
         carregarTestes();
         atualizarLista();
 
-        boxPlataforma.addActionListener(e -> atualizarLista());
+        boxPlataforma.addActionListener(e -> aoTrocarPlataforma());
+        botaoAtualizar.addActionListener(e -> atualizarDispositivos());
         listaComandos.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 mostrarDetalhes();
@@ -292,12 +314,10 @@ public class TelaPrincipal extends JFrame{
         botaoLimpar.addActionListener(e -> areaRetorno.setText(""));
         botaoConectar.addActionListener(e -> alternarConexao());
 
-        // No JTextField, apertar Enter dispara o ActionListener, igual a clicar no botão
         botaoEnviarLivre.addActionListener(e -> enviarComandoLivre());
         campoLivre.addActionListener(e -> enviarComandoLivre());
         botaoSalvarTeste.addActionListener(e -> salvarComoTeste());
 
-        // Exclusão: pelo botão ou pela tecla Delete com a lista em foco
         botaoEditar.addActionListener(e -> editarTeste());
         botaoExcluir.addActionListener(e -> excluirTeste());
         listaComandos.addKeyListener(new KeyAdapter() {
@@ -311,17 +331,14 @@ public class TelaPrincipal extends JFrame{
 
         botaoCancelar.addActionListener(e -> cancelarExecucao());
 
-        // Timer de uma só vez (sem repetir): se disparar, a execução estourou o tempo
         timerLimite = new Timer(TEMPO_LIMITE_MS, e -> finalizarExecucao(StatusExecucao.TEMPO_ESGOTADO));
         timerLimite.setRepeats(false);
 
-        // Regras, resultados e registro
         botaoCriarRegra.addActionListener(e -> criarRegraDaSelecao());
         botaoLimparResultados.addActionListener(e -> limparResultados());
         botaoRegistrar.addActionListener(e -> registrarTeste());
         botaoEncerrar.addActionListener(e -> encerrarRegistro());
 
-        // Duplo clique numa linha da tabela abre os detalhes da execução
         tabelaResultados.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -335,12 +352,139 @@ public class TelaPrincipal extends JFrame{
         });
 
         atualizarBotoesExecucao();
+        atualizarDicaAt();
     }
 
-    /*
-     * Monta o painel "Resultados": botões de registro no topo, linha de PN/SN
-     * (só durante o registro) e a tabela com todas as execuções da sessão.
-     */
+    private void carregarConfiguracao() {
+        try {
+            configuracao.carregar();
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Erro ao ler o arquivo de configuração:\n" + configuracao.getArquivo()
+                            + "\n\n" + ex.getMessage() + "\n\nSerão usados os valores padrão.",
+                    "Aviso", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    private Plataforma plataformaSelecionada() {
+        return (Plataforma) boxPlataforma.getSelectedItem();
+    }
+
+    private void aoTrocarPlataforma() {
+        atualizarLista();
+        Plataforma plataforma = plataformaSelecionada();
+        cartoesConexao.show(painelConexao, plataforma.name());
+        atualizarDicaAt();
+        if (plataforma == Plataforma.ANDROID) {
+            atualizarDispositivos();
+        }
+    }
+
+    private void atualizarDicaAt() {
+        caixaAt.setToolTipText("Envia o texto como comando AT pela porta " + portaAt(plataformaSelecionada()));
+    }
+
+    private String portaAt(Plataforma plataforma) {
+        if (plataforma == Plataforma.PROLIN) {
+            return MontadorComandoAT.PORTA_AT;
+        }
+        String porta = configuracao.getPortaAtAndroid();
+        return porta.isEmpty() ? "(não configurada no config.txt)" : porta;
+    }
+
+    private void atualizarDispositivos() {
+        if (listandoDispositivos) {
+            return;
+        }
+        listandoDispositivos = true;
+        botaoAtualizar.setEnabled(false);
+        labelStatusAndroid.setText("Procurando...");
+        labelStatusAndroid.setForeground(Color.ORANGE);
+
+        // Rede/processo fora da EDT; a tela só é atualizada via invokeLater
+        new Thread(() -> {
+            try {
+                ConexaoAdb.Dispositivos d = conexaoAdb.listarDispositivos();
+                SwingUtilities.invokeLater(() -> mostrarDispositivos(d));
+            } catch (IOException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    terminarListagem();
+                    boxDispositivo.removeAllItems();
+                    atualizarStatusAndroid(false, "adb não encontrado");
+                    JOptionPane.showMessageDialog(this, mensagemAdbNaoEncontrado(ex),
+                            "adb não encontrado", JOptionPane.ERROR_MESSAGE);
+                });
+            }
+        }).start();
+    }
+
+    private void terminarListagem() {
+        listandoDispositivos = false;
+        botaoAtualizar.setEnabled(true);
+    }
+
+    private void mostrarDispositivos(ConexaoAdb.Dispositivos d) {
+        terminarListagem();
+        String anterior = serialSelecionado();
+
+        boxDispositivo.removeAllItems();
+        for (String serial : d.prontos) {
+            boxDispositivo.addItem(serial);
+        }
+        if (d.prontos.size() == 1) {
+            boxDispositivo.setSelectedIndex(0);
+        } else if (anterior != null && d.prontos.contains(anterior)) {
+            boxDispositivo.setSelectedItem(anterior);
+        } else {
+            boxDispositivo.setSelectedIndex(-1);
+        }
+
+        if (!d.prontos.isEmpty()) {
+            atualizarStatusAndroid(true, "Pronto");
+        } else if (!d.naoAutorizados.isEmpty()) {
+            atualizarStatusAndroid(false, "Não autorizado: aceite a depuração USB no aparelho");
+        } else if (!d.offline.isEmpty()) {
+            atualizarStatusAndroid(false, "Offline");
+        } else {
+            atualizarStatusAndroid(false, "Nenhum dispositivo");
+        }
+    }
+
+    private void atualizarStatusAndroid(boolean pronto, String texto) {
+        labelStatusAndroid.setText(texto);
+        labelStatusAndroid.setForeground(pronto ? new Color(0, 128, 0) : Color.RED);
+    }
+
+    private String serialSelecionado() {
+        return (String) boxDispositivo.getSelectedItem();
+    }
+
+    private String mensagemAdbNaoEncontrado(IOException ex) {
+        return "Não foi possível executar o adb (\"" + configuracao.getAdb() + "\").\n\n"
+                + "Ajuste a chave \"adb\" no arquivo:\n" + configuracao.getArquivo()
+                + "\ne reabra o programa.\n\nDetalhe: " + ex.getMessage();
+    }
+
+    private boolean destinoPronto(Plataforma plataforma) {
+        if (plataforma == Plataforma.ANDROID) {
+            if (serialSelecionado() == null) {
+                JOptionPane.showMessageDialog(this,
+                        "Selecione um dispositivo Android (use \"Atualizar\" para procurar).");
+                return false;
+            }
+            return true;
+        }
+        if (!conexao.estaConectado()) {
+            JOptionPane.showMessageDialog(this, "Conecte-se ao terminal primeiro.");
+            return false;
+        }
+        return true;
+    }
+
+    private boolean emExecucao() {
+        return coletor.emAndamento() || adbEmAndamento;
+    }
+
     private JPanel criarPainelResultados() {
         JPanel painel = new JPanel(new BorderLayout(0, 4));
 
@@ -359,7 +503,7 @@ public class TelaPrincipal extends JFrame{
         labelGravando = new JLabel("● Gravando");
         labelGravando.setForeground(Color.RED);
         labelGravando.setFont(labelGravando.getFont().deriveFont(Font.BOLD));
-        labelGravando.setVisible(false); // só aparece durante o registro
+        labelGravando.setVisible(false);
 
         linhaBotoes.add(botaoRegistrar);
         linhaBotoes.add(Box.createHorizontalStrut(10));
@@ -380,7 +524,6 @@ public class TelaPrincipal extends JFrame{
 
         painel.add(topo, BorderLayout.NORTH);
 
-        // Modelo da tabela: guarda os dados; isCellEditable=false impede edição com duplo clique
         modeloResultados = new DefaultTableModel(new Object[]{"Hora", "Teste", "Veredito", "Detalhe"}, 0) {
             @Override
             public boolean isCellEditable(int linha, int coluna) {
@@ -390,7 +533,6 @@ public class TelaPrincipal extends JFrame{
         tabelaResultados = new JTable(modeloResultados);
         tabelaResultados.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         tabelaResultados.setRowHeight(22);
-        // a coluna 2 (Veredito) usa o nosso "pintor" colorido
         tabelaResultados.getColumnModel().getColumn(2).setCellRenderer(new RendererVeredito());
         tabelaResultados.getColumnModel().getColumn(0).setPreferredWidth(70);
         tabelaResultados.getColumnModel().getColumn(1).setPreferredWidth(150);
@@ -401,7 +543,6 @@ public class TelaPrincipal extends JFrame{
         return painel;
     }
 
-    // Lê os testes do arquivo; em caso de erro, avisa e segue com a lista vazia
     private void carregarTestes() {
         try {
             todosComandos = repositorio.carregar();
@@ -434,15 +575,14 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        // teste AT: mostra também a porta usada, como na área de retorno
         campoComando.setText(selecionado.isAt()
-                ? MontadorComandoAT.textoExibicao(selecionado.getTxtComando())
+                ? MontadorComandoAT.textoExibicao(selecionado.getTxtComando(), portaAt(selecionado.getPlataforma()))
                 : selecionado.getTxtComando());
         areaDescricao.setText(selecionado.getDescricao());
     }
     private void enviarComando() {
-        if (coletor.emAndamento()) {
-            return; // só uma execução por vez
+        if (emExecucao()) {
+            return;
         }
 
         Comando selecionado = listaComandos.getSelectedValue();
@@ -452,24 +592,17 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        if (selecionado.getPlataforma() != Plataforma.PROLIN) {
-            JOptionPane.showMessageDialog(this, "Envio para Android ainda não implementado.");
+        Plataforma plataforma = selecionado.getPlataforma();
+        if (!destinoPronto(plataforma)) {
             return;
         }
 
-        if (!conexao.estaConectado()) {
-            JOptionPane.showMessageDialog(this, "Conecte-se ao terminal primeiro.");
-            return;
-        }
-
-        executar(selecionado.getTxtComando(), selecionado.getTipo(), selecionado.getEsperaSegundos(),
-                selecionado, selecionado.getNome(), null);
+        executar(plataforma, serialSelecionado(), selecionado.getTxtComando(), selecionado.getTipo(),
+                selecionado.getEsperaSegundos(), selecionado, selecionado.getNome(), null);
     }
 
-    // Envia o texto digitado no campo "Comando livre", com as mesmas verificações do enviarComando
     private void enviarComandoLivre() {
-        // também bloqueia a tecla Enter do campo enquanto há execução
-        if (coletor.emAndamento()) {
+        if (emExecucao()) {
             return;
         }
 
@@ -480,56 +613,42 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        // aqui não há comando selecionado, então vale a plataforma da setinha
-        if (boxPlataforma.getSelectedItem() != Plataforma.PROLIN) {
-            JOptionPane.showMessageDialog(this, "Envio para Android ainda não implementado.");
+        Plataforma plataforma = plataformaSelecionada();
+        if (!destinoPronto(plataforma)) {
             return;
         }
 
-        if (!conexao.estaConectado()) {
-            JOptionPane.showMessageDialog(this, "Conecte-se ao terminal primeiro.");
-            return;
-        }
-
-        // comando livre não é um teste salvo: Comando = null; o tipo vem da caixa "AT"
         TipoComando tipo = caixaAt.isSelected() ? TipoComando.AT : TipoComando.SHELL;
-        if (executar(texto, tipo, Comando.ESPERA_PADRAO, null, "Livre: " + cortar(texto, 40), null)) {
-            campoLivre.setText(""); // limpa o campo depois de enviar
+        if (executar(plataforma, serialSelecionado(), texto, tipo, Comando.ESPERA_PADRAO,
+                null, "Livre: " + cortar(texto, 40), null)) {
+            campoLivre.setText("");
         }
     }
 
-    /*
-     * Envia um comando com o marcador de fim e começa a acompanhar a execução.
-     * - teste: o teste salvo (null para comando livre e PN/SN), usado na avaliação
-     * - nomeExibicao: o que aparece na coluna "Teste" da tabela
-     * - identificacao: "PN" ou "SN" quando é a leitura de identificação do registro
-     * Devolve true se o envio deu certo.
-     */
-    private boolean executar(String textoComando, Comando teste, String nomeExibicao, String identificacao) {
-        return executar(textoComando, TipoComando.SHELL, Comando.ESPERA_PADRAO, teste, nomeExibicao, identificacao);
+    private boolean executar(Plataforma plataforma, String serial, String textoComando, TipoComando tipo,
+                             int esperaSegundos, Comando teste, String nomeExibicao, String identificacao) {
+        if (plataforma == Plataforma.ANDROID) {
+            return executarAdb(serial, textoComando, tipo, esperaSegundos, teste, nomeExibicao, identificacao);
+        }
+        return executarTelnet(textoComando, tipo, esperaSegundos, teste, nomeExibicao, identificacao);
     }
 
-    /*
-     * Versão com o tipo: no AT, textoComando é só o comando (ex.: AT+CSQ) e
-     * a linha de shell que fala com o modem é montada aqui, antes do marcador de fim.
-     */
-    private boolean executar(String textoComando, TipoComando tipo, int esperaSegundos,
-                             Comando teste, String nomeExibicao, String identificacao) {
-        int numero = ++contadorExecucao; // 1, 2, 3...
+    private boolean executarTelnet(String textoComando, TipoComando tipo, int esperaSegundos,
+                                   Comando teste, String nomeExibicao, String identificacao) {
+        int numero = ++contadorExecucao;
 
-        String linhaShell = textoComando;   // o que vai para o shell (antes do marcador)
-        String textoExibido = textoComando; // o que aparece no "> ..." e no histórico
+        String linhaShell = textoComando;
+        String textoExibido = textoComando;
         int tempoLimite = TEMPO_LIMITE_MS;
         if (tipo == TipoComando.AT) {
             linhaShell = MontadorComandoAT.montarLinha(textoComando, esperaSegundos);
             textoExibido = MontadorComandoAT.textoExibicao(textoComando);
-            // a linha AT demora 1 s + a espera: soma isso ao limite, para não estourar o tempo
             tempoLimite += (1 + esperaSegundos) * 1000;
         }
         String linha = ColetorRetorno.montarLinhaComMarcador(linhaShell, numero);
 
         garantirQuebraDeLinha();
-        exibirTexto("> " + textoExibido + "\n"); // cabeçalho, sem o marcador (e sem a linha montada)
+        exibirTexto("> " + textoExibido + "\n");
 
         try {
             conexao.enviar(linha);
@@ -538,41 +657,142 @@ public class TelaPrincipal extends JFrame{
             return false;
         }
 
-        // Pode iniciar o coletor DEPOIS de enviar: a resposta só é processada em
-        // mostrarRetorno, que roda na EDT, e a EDT está ocupada com este método agora.
+        // Iniciar depois de enviar é seguro: a resposta só é tratada na EDT, que está ocupada aqui
         coletor.iniciar(numero, textoExibido);
         execucaoAtualTeste = teste;
         execucaoAtualTipo = tipo;
         execucaoAtualNome = nomeExibicao;
         execucaoAtualIdentificacao = identificacao;
-        timerLimite.setInitialDelay(tempoLimite); // restart() usa o initialDelay
+        timerLimite.setInitialDelay(tempoLimite);
         timerLimite.restart();
         atualizarBotoesExecucao();
         return true;
     }
 
-    // Botão "Cancelar": manda Ctrl+C. No ash isso interrompe a linha inteira, então o marcador não virá.
+    private boolean executarAdb(String serial, String textoComando, TipoComando tipo, int esperaSegundos,
+                                Comando teste, String nomeExibicao, String identificacao) {
+        String linhaShell = textoComando;
+        String textoExibido = textoComando;
+        int tempoLimite = TEMPO_LIMITE_MS;
+        if (tipo == TipoComando.AT) {
+            String porta = configuracao.getPortaAtAndroid();
+            if (porta.isEmpty()) {
+                registrarAtNaoConfigurado(textoComando, nomeExibicao);
+                return false;
+            }
+            linhaShell = MontadorComandoAT.montarLinha(textoComando, esperaSegundos, porta);
+            if (configuracao.isSuAndroid()) {
+                linhaShell = MontadorComandoAT.envolverEmSu(linhaShell);
+            }
+            textoExibido = MontadorComandoAT.textoExibicao(textoComando, porta);
+            tempoLimite += (1 + esperaSegundos) * 1000;
+        }
+
+        int numero = ++contadorExecucao;
+        garantirQuebraDeLinha();
+        exibirTexto("> " + textoExibido + "\n");
+
+        try {
+            // Os avisos chegam na thread do adb; invokeLater os leva para a EDT
+            conexaoAdb.executar(serial, linhaShell,
+                    texto -> SwingUtilities.invokeLater(() -> receberAdb(numero, texto)),
+                    codigo -> SwingUtilities.invokeLater(() -> terminarAdb(numero, codigo)));
+        } catch (IOException ex) {
+            exibirTexto("[Erro ao executar o adb: " + ex.getMessage() + "]\n");
+            JOptionPane.showMessageDialog(this, mensagemAdbNaoEncontrado(ex),
+                    "adb não encontrado", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+
+        adbEmAndamento = true;
+        numeroAdbAtual = numero;
+        textoAdbAtual = textoExibido;
+        inicioAdbNanos = System.nanoTime();
+        saidaAdb.setLength(0);
+        execucaoAtualTeste = teste;
+        execucaoAtualTipo = tipo;
+        execucaoAtualNome = nomeExibicao;
+        execucaoAtualIdentificacao = identificacao;
+        timerLimite.setInitialDelay(tempoLimite);
+        timerLimite.restart();
+        atualizarBotoesExecucao();
+        return true;
+    }
+
+    private void receberAdb(int numero, String texto) {
+        // Aviso atrasado de uma execução já encerrada (cancelada/tempo esgotado): descarta
+        if (!adbEmAndamento || numero != numeroAdbAtual) {
+            return;
+        }
+        saidaAdb.append(texto);
+        exibirTexto(texto);
+    }
+
+    private void terminarAdb(int numero, Integer codigo) {
+        // Aviso atrasado de uma execução já encerrada (cancelada/tempo esgotado): descarta
+        if (!adbEmAndamento || numero != numeroAdbAtual) {
+            return;
+        }
+        finalizarAdb(StatusExecucao.CONCLUIDO, codigo);
+    }
+
+    private void finalizarAdb(StatusExecucao status, Integer codigo) {
+        adbEmAndamento = false;
+        long duracaoMs = (System.nanoTime() - inicioAdbNanos) / 1_000_000;
+        encerrarExecucao(new ResultadoExecucao(textoAdbAtual, saidaAdb.toString(), codigo, duracaoMs, status));
+    }
+
+    private void registrarAtNaoConfigurado(String comandoAt, String nomeExibicao) {
+        garantirQuebraDeLinha();
+        exibirTexto("> " + comandoAt.trim() + "\n[AT não configurado]\n");
+
+        ResultadoExecucao resultado = new ResultadoExecucao(comandoAt.trim(), "", null, 0, StatusExecucao.CONCLUIDO);
+        ExecucaoAvaliada execucao = new ExecucaoAvaliada(LocalTime.now().withNano(0), nomeExibicao,
+                resultado, new ResultadoAvaliado(Veredito.INFO, "AT não configurado"));
+        adicionarNaTabela(execucao);
+        if (registroAtual != null) {
+            registroAtual.adicionar(execucao);
+        }
+
+        JOptionPane.showMessageDialog(this,
+                "Comandos AT no Android exigem root e a porta serial do modem,\n"
+                        + "que varia por fabricante (ex.: /dev/smd11, /dev/ttyUSB2...).\n\n"
+                        + "Configure a chave \"porta_at_android\" (e, se preciso, su_android=sim) em:\n"
+                        + configuracao.getArquivo() + "\ne reabra o programa.",
+                "AT no Android não configurado", JOptionPane.WARNING_MESSAGE);
+    }
+
     private void cancelarExecucao() {
+        if (adbEmAndamento) {
+            conexaoAdb.cancelar();
+            finalizarAdb(StatusExecucao.CANCELADO, null);
+            return;
+        }
         if (!coletor.emAndamento()) {
             return;
         }
         try {
-            conexao.enviarBytes(new byte[]{0x03}); // 0x03 = Ctrl+C
+            conexao.enviarBytes(new byte[]{0x03});
         } catch (IOException ex) {
             exibirTexto("\n[Erro ao enviar Ctrl+C: " + ex.getMessage() + "]\n");
         }
         finalizarExecucao(StatusExecucao.CANCELADO);
     }
 
-    // Encerra a execução sem o marcador (tempo esgotado, cancelado ou conexão perdida)
     private void finalizarExecucao(StatusExecucao status) {
+        if (adbEmAndamento) {
+            if (status == StatusExecucao.TEMPO_ESGOTADO) {
+                conexaoAdb.cancelar();
+                finalizarAdb(status, null);
+            }
+            return;
+        }
         ResultadoExecucao resultado = coletor.finalizar(status, this::exibirTexto);
-        if (resultado != null) { // null = não havia execução em andamento
+        if (resultado != null) {
             encerrarExecucao(resultado);
         }
     }
 
-    // Chamado sempre que uma execução termina, por qualquer motivo
     private void encerrarExecucao(ResultadoExecucao resultado) {
         timerLimite.stop();
         ultimoResultado = resultado;
@@ -580,43 +800,33 @@ public class TelaPrincipal extends JFrame{
         aoConcluirExecucao(resultado);
         atualizarBotoesExecucao();
 
-        // Se há comandos esperando na fila, dispara o próximo.
-        // invokeLater: deixa a EDT terminar de exibir o texto atual (ex.: o prompt) antes.
         if (!filaComandos.isEmpty()) {
             SwingUtilities.invokeLater(this::executarProximoDaFila);
         }
     }
 
-    /*
-     * FILA DE COMANDOS: só existe uma execução por vez, então comandos automáticos
-     * (como PN e SN) esperam numa fila. Cada vez que uma execução termina,
-     * encerrarExecucao() chama este método, que tira o próximo da fila e envia.
-     */
+    // Fila: uma execução por vez; encerrarExecucao() chama o próximo da fila
     private void executarProximoDaFila() {
-        if (coletor.emAndamento() || filaComandos.isEmpty()) {
-            return; // ainda ocupado (ele será chamado de novo ao terminar) ou nada a fazer
+        if (emExecucao() || filaComandos.isEmpty()) {
+            return;
         }
-        if (!conexao.estaConectado()) {
+        if (filaComandos.peek().plataforma == Plataforma.PROLIN && !conexao.estaConectado()) {
             filaComandos.clear();
             atualizarBotoesExecucao();
             return;
         }
-        ComandoPendente proximo = filaComandos.poll(); // poll = tira o primeiro da fila
-        if (!executar(proximo.texto, null, proximo.identificacao, proximo.identificacao)) {
-            filaComandos.clear(); // o envio falhou: não adianta tentar os outros
+        ComandoPendente proximo = filaComandos.poll();
+        if (!executar(proximo.plataforma, proximo.serial, proximo.texto, TipoComando.SHELL,
+                Comando.ESPERA_PADRAO, null, proximo.identificacao, proximo.identificacao)) {
+            filaComandos.clear();
             atualizarBotoesExecucao();
         }
     }
 
-    /*
-     * Chamado ao fim de cada execução: escreve o rodapé, avalia o resultado,
-     * coloca na tabela e, se estiver gravando, no registro.
-     */
     private void aoConcluirExecucao(ResultadoExecucao resultado) {
         String rodape;
         switch (resultado.getStatus()) {
             case CONCLUIDO:
-                // vírgula decimal: "2,1 s"
                 String segundos = RepositorioHistorico.segundos(resultado.getDuracaoMs());
                 rodape = "[fim | código de saída " + resultado.getCodigoSaida() + " | " + segundos + " s]";
                 break;
@@ -635,7 +845,6 @@ public class TelaPrincipal extends JFrame{
 
         ResultadoAvaliado avaliacao;
         if (execucaoAtualIdentificacao != null) {
-            // leitura de PN/SN: o veredito é sempre INFO e o detalhe é o próprio valor
             String valor = extrairIdentificacao(resultado);
             avaliacao = new ResultadoAvaliado(Veredito.INFO, valor);
             if (registroAtual != null) {
@@ -657,7 +866,6 @@ public class TelaPrincipal extends JFrame{
         }
     }
 
-    /* Valor do getprop: saída sem espaços nas pontas; vazio ou com erro vira "não identificado" */
     private String extrairIdentificacao(ResultadoExecucao resultado) {
         Integer codigo = resultado.getCodigoSaida();
         if (resultado.getStatus() != StatusExecucao.CONCLUIDO || codigo == null || codigo != 0) {
@@ -666,19 +874,13 @@ public class TelaPrincipal extends JFrame{
         String valor = resultado.getSaida().trim();
         int quebra = valor.indexOf('\n');
         if (quebra >= 0) {
-            valor = valor.substring(0, quebra).trim(); // usa só a primeira linha
+            valor = valor.substring(0, quebra).trim();
         }
         return valor.isEmpty() ? RegistroTeste.NAO_IDENTIFICADO : valor;
     }
 
-    /*
-     * Liga/desliga botões conforme o estado atual:
-     * - durante uma execução: Enviar/Enviar livre desligados, Cancelar ligado
-     * - Registrar: só quando não está gravando
-     * - Encerrar: só gravando, sem execução em andamento e sem fila pendente
-     */
     private void atualizarBotoesExecucao() {
-        boolean emExecucao = coletor.emAndamento();
+        boolean emExecucao = emExecucao();
         boolean gravando = registroAtual != null;
 
         botaoEnviar.setEnabled(!emExecucao);
@@ -689,12 +891,11 @@ public class TelaPrincipal extends JFrame{
         atualizarLabelPnSn();
     }
 
-    // Mostra "PN: ... | SN: ..." durante o registro
     private void atualizarLabelPnSn() {
         if (registroAtual == null) {
             return;
         }
-        boolean aguardando = coletor.emAndamento() || !filaComandos.isEmpty();
+        boolean aguardando = emExecucao() || !filaComandos.isEmpty();
         labelPnSn.setText("PN: " + textoIdentificacao(registroAtual.getPn(), aguardando)
                 + "  |  SN: " + textoIdentificacao(registroAtual.getSn(), aguardando));
     }
@@ -706,28 +907,23 @@ public class TelaPrincipal extends JFrame{
         return aguardando ? "aguardando..." : RegistroTeste.NAO_IDENTIFICADO;
     }
 
-    // ===================== Tabela de resultados =====================
-
-    /* Acrescenta uma linha no fim da tabela e rola até ela */
     private void adicionarNaTabela(ExecucaoAvaliada execucao) {
         linhasResultados.add(execucao);
         modeloResultados.addRow(new Object[]{
                 execucao.getHora().format(FORMATO_HORA),
                 execucao.getNomeTeste(),
-                execucao.getAvaliacao().getVeredito(), // o objeto Veredito: o renderer usa a cor dele
+                execucao.getAvaliacao().getVeredito(),
                 execucao.getAvaliacao().getDetalhe()
         });
         int ultima = modeloResultados.getRowCount() - 1;
         tabelaResultados.scrollRectToVisible(tabelaResultados.getCellRect(ultima, 0, true));
     }
 
-    /* Limpa só a tabela; um registro em andamento continua com as execuções dele */
     private void limparResultados() {
         modeloResultados.setRowCount(0);
         linhasResultados.clear();
     }
 
-    /* Diálogo do duplo clique: todos os dados da execução e a saída completa */
     private void mostrarDetalhesExecucao(ExecucaoAvaliada execucao) {
         ResultadoExecucao r = execucao.getResultado();
         ResultadoAvaliado a = execucao.getAvaliacao();
@@ -738,7 +934,7 @@ public class TelaPrincipal extends JFrame{
                 + "   (" + execucao.getHora().format(FORMATO_HORA) + ")"));
 
         JTextField campoTexto = new JTextField(r.getTextoComando());
-        campoTexto.setEditable(false); // permite selecionar e copiar, mas não editar
+        campoTexto.setEditable(false);
         campoTexto.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         info.add(campoTexto);
 
@@ -754,7 +950,7 @@ public class TelaPrincipal extends JFrame{
         JTextArea areaSaida = new JTextArea(r.getSaida(), 18, 80);
         areaSaida.setEditable(false);
         areaSaida.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
-        areaSaida.setCaretPosition(0); // começa mostrando o topo da saída
+        areaSaida.setCaretPosition(0);
 
         JPanel painel = new JPanel(new BorderLayout(0, 8));
         painel.add(info, BorderLayout.NORTH);
@@ -763,12 +959,6 @@ public class TelaPrincipal extends JFrame{
         JOptionPane.showMessageDialog(this, painel, "Detalhes da execução", JOptionPane.PLAIN_MESSAGE);
     }
 
-    // ===================== Regras =====================
-
-    /*
-     * Cria uma regra a partir do trecho selecionado na área de retorno
-     * e adiciona ao teste da última execução.
-     */
     private void criarRegraDaSelecao() {
         if (ultimoResultado == null) {
             JOptionPane.showMessageDialog(this, "Execute um teste primeiro.");
@@ -799,7 +989,6 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        // Diálogo: tipo, padrão (já com a seleção), rótulo e caixa "expressão regular"
         JComboBox<Veredito> boxTipo = new JComboBox<>(new Veredito[]{Veredito.OK, Veredito.ALERTA, Veredito.FALHA});
         JTextField campoPadrao = new JTextField(primeiraLinha(selecao), 35);
         campoPadrao.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
@@ -829,13 +1018,12 @@ public class TelaPrincipal extends JFrame{
                 continue;
             }
             if (padrao.contains(" => ")) {
-                // " => " separa padrão e rótulo no arquivo; no padrão ele confundiria a leitura
                 JOptionPane.showMessageDialog(this, "O padrão não pode conter \" => \".");
                 continue;
             }
             if (caixaRegex.isSelected()) {
                 try {
-                    Pattern.compile(padrao); // só para validar antes de salvar
+                    Pattern.compile(padrao);
                 } catch (PatternSyntaxException ex) {
                     JOptionPane.showMessageDialog(this, "Expressão regular inválida:\n" + ex.getDescription());
                     continue;
@@ -851,7 +1039,7 @@ public class TelaPrincipal extends JFrame{
         try {
             repositorio.salvar(todosComandos);
         } catch (IOException ex) {
-            ultimoTeste.getRegras().remove(regra); // desfaz na memória
+            ultimoTeste.getRegras().remove(regra);
             JOptionPane.showMessageDialog(this,
                     "Erro ao salvar o arquivo de testes:\n" + ex.getMessage(),
                     "Erro", JOptionPane.ERROR_MESSAGE);
@@ -862,7 +1050,6 @@ public class TelaPrincipal extends JFrame{
                 "Regra adicionada ao teste \"" + ultimoTeste.getNome() + "\":\n" + regra);
     }
 
-    /* O arquivo guarda uma linha por campo: da seleção, usa a primeira linha com texto */
     private String primeiraLinha(String texto) {
         for (String linha : texto.split("\n")) {
             if (!linha.isBlank()) {
@@ -872,38 +1059,39 @@ public class TelaPrincipal extends JFrame{
         return texto.trim();
     }
 
-    // ===================== Registro de teste =====================
-
     private void registrarTeste() {
         if (registroAtual != null) {
             return;
         }
-        if (!conexao.estaConectado()) {
-            JOptionPane.showMessageDialog(this, "Conecte-se ao terminal primeiro.");
+        Plataforma plataforma = plataformaSelecionada();
+        if (!destinoPronto(plataforma)) {
             return;
         }
-        if (boxPlataforma.getSelectedItem() != Plataforma.PROLIN) {
-            JOptionPane.showMessageDialog(this, "O registro de teste só está disponível para Prolin.");
-            return;
-        }
-        if (coletor.emAndamento()) {
+        if (emExecucao()) {
             JOptionPane.showMessageDialog(this, "Aguarde a execução atual terminar.");
             return;
         }
 
-        registroAtual = new RegistroTeste(LocalDateTime.now().withNano(0));
+        boolean android = plataforma == Plataforma.ANDROID;
+        String serial = android ? serialSelecionado() : null;
+        registroAtual = new RegistroTeste(LocalDateTime.now().withNano(0), plataforma,
+                android ? serial : enderecoConectado);
         labelGravando.setVisible(true);
         labelPnSn.setVisible(true);
 
-        // PN e SN entram na fila e rodam um depois do outro
-        filaComandos.add(new ComandoPendente("/startup/bin/getprop ro.fac.pn", "PN"));
-        filaComandos.add(new ComandoPendente("/startup/bin/getprop ro.fac.sn", "SN"));
+        if (android) {
+            filaComandos.add(new ComandoPendente(plataforma, serial, configuracao.getCmdSnAndroid(), "SN"));
+            filaComandos.add(new ComandoPendente(plataforma, serial, configuracao.getCmdPnAndroid(), "PN"));
+        } else {
+            filaComandos.add(new ComandoPendente(plataforma, null, "/startup/bin/getprop ro.fac.pn", "PN"));
+            filaComandos.add(new ComandoPendente(plataforma, null, "/startup/bin/getprop ro.fac.sn", "SN"));
+        }
         atualizarBotoesExecucao();
         executarProximoDaFila();
     }
 
     private void encerrarRegistro() {
-        if (registroAtual == null || coletor.emAndamento() || !filaComandos.isEmpty()) {
+        if (registroAtual == null || emExecucao() || !filaComandos.isEmpty()) {
             return;
         }
 
@@ -913,7 +1101,7 @@ public class TelaPrincipal extends JFrame{
             nomeDigitado = JOptionPane.showInputDialog(this, "Nome do teste:",
                     "Encerrar registro", JOptionPane.QUESTION_MESSAGE);
 
-            if (nomeDigitado == null) { // cancelou
+            if (nomeDigitado == null) {
                 Object[] opcoes = {"Continuar gravando", "Descartar registro"};
                 int escolha = JOptionPane.showOptionDialog(this,
                         "O registro ainda não foi salvo. O que deseja fazer?", "Encerrar registro",
@@ -941,7 +1129,7 @@ public class TelaPrincipal extends JFrame{
             if (resposta == JOptionPane.NO_OPTION) {
                 caminho = repositorioHistorico.proximoLivre(caminho);
             } else if (resposta != JOptionPane.YES_OPTION) {
-                return; // cancelou: continua gravando
+                return;
             }
         }
 
@@ -958,7 +1146,6 @@ public class TelaPrincipal extends JFrame{
         finalizarRegistro();
     }
 
-    /* Para de gravar; a tabela continua com as linhas */
     private void finalizarRegistro() {
         registroAtual = null;
         labelGravando.setVisible(false);
@@ -966,12 +1153,10 @@ public class TelaPrincipal extends JFrame{
         atualizarBotoesExecucao();
     }
 
-    /* Corta textos longos para caber na tabela */
     private static String cortar(String texto, int maximo) {
         return texto.length() <= maximo ? texto : texto.substring(0, maximo) + "...";
     }
 
-    // Pede nome e descrição e grava o comando livre como um novo teste no arquivo
     private void salvarComoTeste() {
         String texto = campoLivre.getText().trim();
         if (texto.isEmpty()) {
@@ -988,25 +1173,23 @@ public class TelaPrincipal extends JFrame{
         }
 
         Plataforma plataforma = (Plataforma) boxPlataforma.getSelectedItem();
-        boolean ehAt = caixaAt.isSelected(); // caixa "AT" marcada: salva com tipo=AT
+        boolean ehAt = caixaAt.isSelected();
 
-        // Painel com dois campos, mostrado dentro do JOptionPane
         JTextField campoNome = new JTextField(25);
         JTextField campoDescricao = new JTextField(25);
-        JPanel painel = new JPanel(new GridLayout(0, 1, 0, 4)); // 1 coluna, quantas linhas precisar
+        JPanel painel = new JPanel(new GridLayout(0, 1, 0, 4));
         painel.add(new JLabel("Nome (obrigatório):"));
         painel.add(campoNome);
         painel.add(new JLabel("Descrição (opcional):"));
         painel.add(campoDescricao);
 
         String nome;
-        // repete o diálogo até o usuário informar um nome ou cancelar
         while (true) {
             int opcao = JOptionPane.showConfirmDialog(this, painel,
                     "Salvar como teste (" + plataforma + (ehAt ? ", AT" : "") + ")",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
-                return; // cancelou
+                return;
             }
             nome = campoNome.getText().trim();
             if (!nome.isEmpty()) {
@@ -1020,10 +1203,8 @@ public class TelaPrincipal extends JFrame{
             novo.setTipo(TipoComando.AT);
         }
 
-        // trabalha numa cópia: se a gravação falhar, a lista em memória não muda
         List<Comando> novaLista = new ArrayList<>(todosComandos);
 
-        // procura um teste com o mesmo nome na mesma plataforma
         int indiceExistente = -1;
         for (int i = 0; i < novaLista.size(); i++) {
             Comando c = novaLista.get(i);
@@ -1040,7 +1221,7 @@ public class TelaPrincipal extends JFrame{
             if (resposta != JOptionPane.YES_OPTION) {
                 return;
             }
-            novaLista.set(indiceExistente, novo); // substitui mantendo a posição
+            novaLista.set(indiceExistente, novo);
         } else {
             novaLista.add(novo);
         }
@@ -1056,10 +1237,9 @@ public class TelaPrincipal extends JFrame{
 
         todosComandos = novaLista;
         atualizarLista();
-        listaComandos.setSelectedValue(novo, true); // seleciona e rola até o novo teste
+        listaComandos.setSelectedValue(novo, true);
     }
 
-    // Abre um diálogo já preenchido com o teste selecionado e grava as alterações
     private void editarTeste() {
         Comando selecionado = listaComandos.getSelectedValue();
         if (selecionado == null) {
@@ -1075,7 +1255,6 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        // Campos já preenchidos com os valores atuais
         JTextField campoNome = new JTextField(selecionado.getNome(), 30);
         JTextField campoTexto = new JTextField(selecionado.getTxtComando(), 30);
         campoTexto.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
@@ -1089,17 +1268,16 @@ public class TelaPrincipal extends JFrame{
         painel.add(new JLabel("Descrição (opcional):"));
         painel.add(campoDescricao);
 
-        Plataforma plataforma = selecionado.getPlataforma(); // a plataforma não muda na edição
+        Plataforma plataforma = selecionado.getPlataforma();
         String nome;
         String texto;
 
-        // repete até os campos obrigatórios estarem certos ou o usuário cancelar
         while (true) {
             int opcao = JOptionPane.showConfirmDialog(this, painel,
                     "Editar teste (" + plataforma + ")",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
-                return; // cancelou
+                return;
             }
 
             nome = campoNome.getText().trim();
@@ -1110,7 +1288,6 @@ public class TelaPrincipal extends JFrame{
                 continue;
             }
 
-            // não pode ficar com o mesmo nome de OUTRO teste da mesma plataforma
             if (existeOutroComNome(nome, plataforma, selecionado)) {
                 JOptionPane.showMessageDialog(this,
                         "Já existe outro teste \"" + nome + "\" em " + plataforma + ".");
@@ -1119,9 +1296,7 @@ public class TelaPrincipal extends JFrame{
             break;
         }
 
-        // Nome/comando/descrição não têm setters: criamos um objeto novo e trocamos o antigo por ele
         Comando editado = new Comando(nome, plataforma, texto, campoDescricao.getText().trim());
-        // as regras e o "informativo" passam para o novo objeto
         editado.setRegras(selecionado.getRegras());
         editado.setInformativo(selecionado.isInformativo());
         editado.setTipo(selecionado.getTipo());
@@ -1129,7 +1304,7 @@ public class TelaPrincipal extends JFrame{
 
         List<Comando> novaLista = new ArrayList<>(todosComandos);
         int indice = novaLista.indexOf(selecionado);
-        novaLista.set(indice, editado); // mantém a posição na lista
+        novaLista.set(indice, editado);
 
         try {
             repositorio.salvar(novaLista);
@@ -1142,13 +1317,12 @@ public class TelaPrincipal extends JFrame{
 
         todosComandos = novaLista;
         if (ultimoTeste == selecionado) {
-            ultimoTeste = editado; // "Criar regra da seleção" continua apontando para o teste certo
+            ultimoTeste = editado;
         }
         atualizarLista();
-        listaComandos.setSelectedValue(editado, true); // reseleciona e mostra os novos detalhes
+        listaComandos.setSelectedValue(editado, true);
     }
 
-    // true se algum teste diferente de "ignorar" já usa esse nome na plataforma
     private boolean existeOutroComNome(String nome, Plataforma plataforma, Comando ignorar) {
         for (Comando c : todosComandos) {
             if (c != ignorar && c.getPlataforma() == plataforma && c.getNome().equals(nome)) {
@@ -1158,7 +1332,6 @@ public class TelaPrincipal extends JFrame{
         return false;
     }
 
-    // Remove o teste selecionado, depois de pedir confirmação, e regrava o arquivo
     private void excluirTeste() {
         Comando selecionado = listaComandos.getSelectedValue();
         if (selecionado == null) {
@@ -1182,10 +1355,8 @@ public class TelaPrincipal extends JFrame{
             return;
         }
 
-        // guarda a posição para selecionar o item vizinho depois de excluir
         int posicaoNaLista = listaComandos.getSelectedIndex();
 
-        // mesma ideia do salvarComoTeste: altera uma cópia e só troca se a gravação der certo
         List<Comando> novaLista = new ArrayList<>(todosComandos);
         novaLista.remove(selecionado);
 
@@ -1201,7 +1372,6 @@ public class TelaPrincipal extends JFrame{
         todosComandos = novaLista;
         atualizarLista();
 
-        // seleciona o próximo item (ou o último, se o excluído era o último da lista)
         if (!modeloLista.isEmpty()) {
             int novaPosicao = Math.min(posicaoNaLista, modeloLista.size() - 1);
             listaComandos.setSelectedIndex(novaPosicao);
@@ -1212,7 +1382,8 @@ public class TelaPrincipal extends JFrame{
         if (conexao.estaConectado()) {
             conexao.desconectar();
             atualizarStatus(false, "Desconectado");
-            filaComandos.clear(); // sem conexão, a fila não tem como continuar
+            // Sem Telnet, só os itens do Prolin saem da fila
+            filaComandos.removeIf(c -> c.plataforma == Plataforma.PROLIN);
             finalizarExecucao(StatusExecucao.CONEXAO_PERDIDA);
             atualizarBotoesExecucao();
             return;
@@ -1238,19 +1409,22 @@ public class TelaPrincipal extends JFrame{
 
         loginEnviado = false;
 
+        // Rede/processo fora da EDT; a tela só é atualizada via invokeLater
         new Thread(() -> {
             try {
                 conexao.conectar(host, porta,
                         texto -> SwingUtilities.invokeLater(() -> mostrarRetorno(texto)),
                         () -> SwingUtilities.invokeLater(() -> {
                             atualizarStatus(false, "Desconectado");
-                            // se a conexão caiu no meio de uma execução, encerra ela
-                            filaComandos.clear();
+                            // Sem Telnet, só os itens do Prolin saem da fila
+                            filaComandos.removeIf(c -> c.plataforma == Plataforma.PROLIN);
                             finalizarExecucao(StatusExecucao.CONEXAO_PERDIDA);
                             atualizarBotoesExecucao();
                         }));
-                SwingUtilities.invokeLater(() ->
-                        atualizarStatus(true, "Conectado a " + host + ":" + porta));
+                SwingUtilities.invokeLater(() -> {
+                    enderecoConectado = host + ":" + porta;
+                    atualizarStatus(true, "Conectado a " + enderecoConectado);
+                });
             } catch (IOException ex) {
                 SwingUtilities.invokeLater(() ->
                         atualizarStatus(false, "Falha: " + ex.getMessage()));
@@ -1258,17 +1432,15 @@ public class TelaPrincipal extends JFrame{
         }).start();
     }
 
-    // Recebe o texto do terminal (sempre na EDT, via invokeLater)
     private void mostrarRetorno(String texto) {
         if (coletor.emAndamento()) {
-            // durante uma execução, o coletor filtra o eco e o marcador antes de exibir
             ResultadoExecucao resultado = coletor.receber(texto, this::exibirTexto);
             if (resultado != null) {
-                encerrarExecucao(resultado);          // escreve o rodapé
-                exibirTexto(coletor.retirarSobra());  // depois o que veio após o marcador (prompt)
+                encerrarExecucao(resultado);
+                exibirTexto(coletor.retirarSobra());
             }
         } else {
-            exibirTexto(texto); // fora de execução: mostra tudo, como antes
+            exibirTexto(texto);
         }
 
         if (!loginEnviado && texto.contains("login:")) {
@@ -1281,7 +1453,6 @@ public class TelaPrincipal extends JFrame{
         }
     }
 
-    // Acrescenta texto na área de retorno e rola até o fim
     private void exibirTexto(String texto) {
         if (texto.isEmpty()) {
             return;
@@ -1290,7 +1461,6 @@ public class TelaPrincipal extends JFrame{
         areaRetorno.setCaretPosition(areaRetorno.getDocument().getLength());
     }
 
-    // Se a última linha da área não terminou, pula uma linha (ex.: depois do prompt "~ $ ")
     private void garantirQuebraDeLinha() {
         String atual = areaRetorno.getText();
         if (!atual.isEmpty() && !atual.endsWith("\n")) {
@@ -1305,12 +1475,3 @@ public class TelaPrincipal extends JFrame{
         botaoConectar.setEnabled(true);
     }
 }
-
-
-
-
-
-
-
-
-
