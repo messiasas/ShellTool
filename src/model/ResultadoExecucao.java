@@ -39,6 +39,6 @@ public class ResultadoExecucao {
 
     @Override
     public String toString() {
-        return status + " | código " + codigoSaida + " | " + duracaoMs + " ms | " + textoComando;
+        return status + " | code " + codigoSaida + " | " + duracaoMs + " ms | " + textoComando;
     }
 }

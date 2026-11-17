@@ -1,15 +1,13 @@
 package TelaPrincipal;
 
+import app.Versao;
 import avaliacao.AvaliadorResultado;
 import avaliacao.ExecucaoAvaliada;
 import avaliacao.Regra;
 import avaliacao.RegistroTeste;
 import avaliacao.ResultadoAvaliado;
 import avaliacao.Veredito;
-import conexao.ColetorRetorno;
-import conexao.ConexaoAdb;
-import conexao.ConexaoTelnet;
-import conexao.MontadorComandoAT;
+import conexao.*;
 import model.Comando;
 import model.Plataforma;
 import model.ResultadoExecucao;
@@ -38,6 +36,8 @@ import java.util.Deque;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
+import conexao.LocalizadorAdb;
+import javax.swing.filechooser.FileNameExtensionFilter;
 
 public class TelaPrincipal extends JFrame{
 
@@ -136,19 +136,25 @@ public class TelaPrincipal extends JFrame{
     }
 
     public TelaPrincipal(){
-        setTitle("ShellTool");
+        setTitle("ShellTool " + Versao.ATUAL);
         setSize(1280, 720);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
         setLayout(new BorderLayout());
+        java.net.URL urlIcone = getClass().getResource("/recursos/icon.png");
+        if (urlIcone != null) {
+            setIconImage(new javax.swing.ImageIcon(urlIcone).getImage());
+        } else {
+            System.err.println("icon not found");
+        }
 
         carregarConfiguracao();
-        conexaoAdb = new ConexaoAdb(configuracao.getAdb());
+        conexaoAdb = new ConexaoAdb(LocalizadorAdb.resolver(configuracao.getAdb()));
         // Ao fechar o programa, não deixa um adb rodando sozinho
-        Runtime.getRuntime().addShutdownHook(new Thread(conexaoAdb::cancelar));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> conexaoAdb.cancelar()));
 
         JPanel painelTopo = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        painelTopo.add(new JLabel("Plataforma"));
+        painelTopo.add(new JLabel("Platform"));
         boxPlataforma = new JComboBox<>(Plataforma.values());
         painelTopo.add(boxPlataforma);
 
@@ -159,7 +165,7 @@ public class TelaPrincipal extends JFrame{
         campoHost = new JTextField(15);
         cartaoProlin.add(campoHost);
 
-        cartaoProlin.add(new JLabel("Porta:"));
+        cartaoProlin.add(new JLabel("Port:"));
         campoPorta = new JTextField("2323", 5);
         cartaoProlin.add(campoPorta);
 
@@ -167,19 +173,19 @@ public class TelaPrincipal extends JFrame{
         campoLogin = new JTextField(10);
         cartaoProlin.add(campoLogin);
 
-        botaoConectar = new JButton("Conectar");
+        botaoConectar = new JButton("Connect");
         cartaoProlin.add(botaoConectar);
 
-        labelStatus = new JLabel("Desconectado");
+        labelStatus = new JLabel("Disconnected");
         labelStatus.setForeground(Color.RED);
         cartaoProlin.add(labelStatus);
 
         JPanel cartaoAndroid = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
-        cartaoAndroid.add(new JLabel("Dispositivo:"));
+        cartaoAndroid.add(new JLabel("Device:"));
         boxDispositivo = new JComboBox<>();
         boxDispositivo.setPrototypeDisplayValue("XXXXXXXXXXXXXXXXXXXX");
         cartaoAndroid.add(boxDispositivo);
-        botaoAtualizar = new JButton("Atualizar");
+        botaoAtualizar = new JButton("Refresh");
         cartaoAndroid.add(botaoAtualizar);
         labelStatusAndroid = new JLabel(" ");
         cartaoAndroid.add(labelStatusAndroid);
@@ -203,7 +209,7 @@ public class TelaPrincipal extends JFrame{
         painelDetalhes.setLayout(new BoxLayout(painelDetalhes, BoxLayout.Y_AXIS));
         painelDetalhes.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        painelDetalhes.add(new JLabel("Comando:"));
+        painelDetalhes.add(new JLabel("Command:"));
         campoComando = new JTextField();
         campoComando.setEditable(false);
         campoComando.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
@@ -213,7 +219,7 @@ public class TelaPrincipal extends JFrame{
 
         painelDetalhes.add(Box.createVerticalStrut(10));
 
-        painelDetalhes.add(new JLabel("Descrição:"));
+        painelDetalhes.add(new JLabel("Description:"));
         areaDescricao = new JTextArea(3, 30);
         areaDescricao.setEditable(false);
         areaDescricao.setLineWrap(true);
@@ -227,19 +233,19 @@ public class TelaPrincipal extends JFrame{
         painelDetalhes.add(Box.createVerticalStrut(10));
 
         JPanel painelBotoes = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        botaoEnviar = new JButton("Enviar");
-        botaoLimpar = new JButton("Limpar retorno");
+        botaoEnviar = new JButton("Send");
+        botaoLimpar = new JButton("Clear output");
         painelBotoes.add(botaoEnviar);
         painelBotoes.add(Box.createHorizontalStrut(10));
-        botaoCancelar = new JButton("Cancelar");
+        botaoCancelar = new JButton("Cancel");
         botaoCancelar.setEnabled(false);
         painelBotoes.add(botaoCancelar);
         painelBotoes.add(Box.createHorizontalStrut(10));
         painelBotoes.add(botaoLimpar);
-        botaoEditar = new JButton("Editar teste");
+        botaoEditar = new JButton("Edit test");
         painelBotoes.add(Box.createHorizontalStrut(10));
         painelBotoes.add(botaoEditar);
-        botaoExcluir = new JButton("Excluir teste");
+        botaoExcluir = new JButton("Delete test");
         painelBotoes.add(Box.createHorizontalStrut(10));
         painelBotoes.add(botaoExcluir);
         painelBotoes.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -250,8 +256,8 @@ public class TelaPrincipal extends JFrame{
 
         JPanel painelRetorno = new JPanel(new BorderLayout(0, 4));
         JPanel topoRetorno = new JPanel(new BorderLayout());
-        topoRetorno.add(new JLabel("Retorno:"), BorderLayout.WEST);
-        botaoCriarRegra = new JButton("Criar regra da seleção");
+        topoRetorno.add(new JLabel("Output:"), BorderLayout.WEST);
+        botaoCriarRegra = new JButton("Create rule from selection");
         topoRetorno.add(botaoCriarRegra, BorderLayout.EAST);
         painelRetorno.add(topoRetorno, BorderLayout.NORTH);
 
@@ -278,7 +284,7 @@ public class TelaPrincipal extends JFrame{
         JPanel painelInferior = new JPanel(new BorderLayout(8, 0));
         painelInferior.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
 
-        painelInferior.add(new JLabel("Comando livre:"), BorderLayout.WEST);
+        painelInferior.add(new JLabel("Custom command:"), BorderLayout.WEST);
 
         campoLivre = new JTextField();
         campoLivre.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 14));
@@ -288,8 +294,8 @@ public class TelaPrincipal extends JFrame{
         caixaAt = new JCheckBox("AT");
         painelBotoesLivre.add(caixaAt);
         painelBotoesLivre.add(Box.createHorizontalStrut(10));
-        botaoEnviarLivre = new JButton("Enviar livre");
-        botaoSalvarTeste = new JButton("Salvar como teste");
+        botaoEnviarLivre = new JButton("Send custom");
+        botaoSalvarTeste = new JButton("Save as test");
         painelBotoesLivre.add(botaoEnviarLivre);
         painelBotoesLivre.add(Box.createHorizontalStrut(10));
         painelBotoesLivre.add(botaoSalvarTeste);
@@ -360,9 +366,9 @@ public class TelaPrincipal extends JFrame{
             configuracao.carregar();
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                    "Erro ao ler o arquivo de configuração:\n" + configuracao.getArquivo()
-                            + "\n\n" + ex.getMessage() + "\n\nSerão usados os valores padrão.",
-                    "Aviso", JOptionPane.WARNING_MESSAGE);
+                    "Error reading the configuration file:\n" + configuracao.getArquivo()
+                            + "\n\n" + ex.getMessage() + "\n\nDefault values will be used.",
+                    "Warning", JOptionPane.WARNING_MESSAGE);
         }
     }
 
@@ -381,7 +387,7 @@ public class TelaPrincipal extends JFrame{
     }
 
     private void atualizarDicaAt() {
-        caixaAt.setToolTipText("Envia o texto como comando AT pela porta " + portaAt(plataformaSelecionada()));
+        caixaAt.setToolTipText("Sends the text as an AT command through port " + portaAt(plataformaSelecionada()));
     }
 
     private String portaAt(Plataforma plataforma) {
@@ -389,7 +395,7 @@ public class TelaPrincipal extends JFrame{
             return MontadorComandoAT.PORTA_AT;
         }
         String porta = configuracao.getPortaAtAndroid();
-        return porta.isEmpty() ? "(não configurada no config.txt)" : porta;
+        return porta.isEmpty() ? "(not configured in config.txt)" : porta;
     }
 
     private void atualizarDispositivos() {
@@ -398,7 +404,7 @@ public class TelaPrincipal extends JFrame{
         }
         listandoDispositivos = true;
         botaoAtualizar.setEnabled(false);
-        labelStatusAndroid.setText("Procurando...");
+        labelStatusAndroid.setText("Searching...");
         labelStatusAndroid.setForeground(Color.ORANGE);
 
         // Rede/processo fora da EDT; a tela só é atualizada via invokeLater
@@ -410,9 +416,8 @@ public class TelaPrincipal extends JFrame{
                 SwingUtilities.invokeLater(() -> {
                     terminarListagem();
                     boxDispositivo.removeAllItems();
-                    atualizarStatusAndroid(false, "adb não encontrado");
-                    JOptionPane.showMessageDialog(this, mensagemAdbNaoEncontrado(ex),
-                            "adb não encontrado", JOptionPane.ERROR_MESSAGE);
+                    atualizarStatusAndroid(false, "adb not found");
+                    oferecerLocalizarAdb(ex);
                 });
             }
         }).start();
@@ -440,13 +445,13 @@ public class TelaPrincipal extends JFrame{
         }
 
         if (!d.prontos.isEmpty()) {
-            atualizarStatusAndroid(true, "Pronto");
+            atualizarStatusAndroid(true, "Ready");
         } else if (!d.naoAutorizados.isEmpty()) {
-            atualizarStatusAndroid(false, "Não autorizado: aceite a depuração USB no aparelho");
+            atualizarStatusAndroid(false, "Unauthorized: accept USB debugging on the device");
         } else if (!d.offline.isEmpty()) {
             atualizarStatusAndroid(false, "Offline");
         } else {
-            atualizarStatusAndroid(false, "Nenhum dispositivo");
+            atualizarStatusAndroid(false, "No devices");
         }
     }
 
@@ -459,23 +464,42 @@ public class TelaPrincipal extends JFrame{
         return (String) boxDispositivo.getSelectedItem();
     }
 
-    private String mensagemAdbNaoEncontrado(IOException ex) {
-        return "Não foi possível executar o adb (\"" + configuracao.getAdb() + "\").\n\n"
-                + "Ajuste a chave \"adb\" no arquivo:\n" + configuracao.getArquivo()
-                + "\ne reabra o programa.\n\nDetalhe: " + ex.getMessage();
+    private void oferecerLocalizarAdb(IOException ex) {
+        int escolha = JOptionPane.showConfirmDialog(this,
+                "adb was not found.\n\nDo you want to locate adb.exe (or pax_adb.exe)?\n\nDetails: " + ex.getMessage(),
+                "adb not found", JOptionPane.YES_NO_OPTION, JOptionPane.ERROR_MESSAGE);
+        if (escolha != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        JFileChooser seletor = new JFileChooser();
+        seletor.setFileFilter(new FileNameExtensionFilter("Executable (*.exe)", "exe"));
+        if (seletor.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+
+        String caminho = seletor.getSelectedFile().getAbsolutePath();
+        try {
+            configuracao.setAdb(caminho);
+        } catch (IOException erro) {
+            JOptionPane.showMessageDialog(this, "Could not save config.txt: " + erro.getMessage());
+        }
+        conexaoAdb.cancelar();
+        conexaoAdb = new ConexaoAdb(caminho);
+        atualizarStatusAndroid(false, "adb set - click Refresh");
     }
 
     private boolean destinoPronto(Plataforma plataforma) {
         if (plataforma == Plataforma.ANDROID) {
             if (serialSelecionado() == null) {
                 JOptionPane.showMessageDialog(this,
-                        "Selecione um dispositivo Android (use \"Atualizar\" para procurar).");
+                        "Select an Android device (use \"Refresh\" to search).");
                 return false;
             }
             return true;
         }
         if (!conexao.estaConectado()) {
-            JOptionPane.showMessageDialog(this, "Conecte-se ao terminal primeiro.");
+            JOptionPane.showMessageDialog(this, "Connect to the terminal first.");
             return false;
         }
         return true;
@@ -491,16 +515,16 @@ public class TelaPrincipal extends JFrame{
         JPanel topo = new JPanel();
         topo.setLayout(new BoxLayout(topo, BoxLayout.Y_AXIS));
 
-        JLabel titulo = new JLabel("Resultados:");
+        JLabel titulo = new JLabel("Results:");
         titulo.setAlignmentX(Component.LEFT_ALIGNMENT);
         topo.add(titulo);
         topo.add(Box.createVerticalStrut(4));
 
         JPanel linhaBotoes = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        botaoRegistrar = new JButton("Registrar teste");
-        botaoEncerrar = new JButton("Encerrar");
-        botaoLimparResultados = new JButton("Limpar resultados");
-        labelGravando = new JLabel("● Gravando");
+        botaoRegistrar = new JButton("Record test");
+        botaoEncerrar = new JButton("Finish");
+        botaoLimparResultados = new JButton("Clear results");
+        labelGravando = new JLabel("● Recording");
         labelGravando.setForeground(Color.RED);
         labelGravando.setFont(labelGravando.getFont().deriveFont(Font.BOLD));
         labelGravando.setVisible(false);
@@ -524,7 +548,7 @@ public class TelaPrincipal extends JFrame{
 
         painel.add(topo, BorderLayout.NORTH);
 
-        modeloResultados = new DefaultTableModel(new Object[]{"Hora", "Teste", "Veredito", "Detalhe"}, 0) {
+        modeloResultados = new DefaultTableModel(new Object[]{"Time", "Test", "Verdict", "Details"}, 0) {
             @Override
             public boolean isCellEditable(int linha, int coluna) {
                 return false;
@@ -550,9 +574,9 @@ public class TelaPrincipal extends JFrame{
         } catch (IOException ex) {
             todosComandos = new ArrayList<>();
             JOptionPane.showMessageDialog(this,
-                    "Erro ao ler o arquivo de testes:\n" + repositorio.getArquivo()
+                    "Error reading the tests file:\n" + repositorio.getArquivo()
                             + "\n\n" + ex.getMessage(),
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -588,7 +612,7 @@ public class TelaPrincipal extends JFrame{
         Comando selecionado = listaComandos.getSelectedValue();
 
         if (selecionado == null) {
-            JOptionPane.showMessageDialog(this, "Selecione um comando na lista.");
+            JOptionPane.showMessageDialog(this, "Select a command from the list.");
             return;
         }
 
@@ -609,7 +633,7 @@ public class TelaPrincipal extends JFrame{
         String texto = campoLivre.getText().trim();
 
         if (texto.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Digite um comando no campo livre.");
+            JOptionPane.showMessageDialog(this, "Type a command in the custom command field.");
             return;
         }
 
@@ -620,7 +644,7 @@ public class TelaPrincipal extends JFrame{
 
         TipoComando tipo = caixaAt.isSelected() ? TipoComando.AT : TipoComando.SHELL;
         if (executar(plataforma, serialSelecionado(), texto, tipo, Comando.ESPERA_PADRAO,
-                null, "Livre: " + cortar(texto, 40), null)) {
+                null, "Custom: " + cortar(texto, 40), null)) {
             campoLivre.setText("");
         }
     }
@@ -653,7 +677,7 @@ public class TelaPrincipal extends JFrame{
         try {
             conexao.enviar(linha);
         } catch (IOException ex) {
-            exibirTexto("[Erro ao enviar: " + ex.getMessage() + "]\n");
+            exibirTexto("[Error sending: " + ex.getMessage() + "]\n");
             return false;
         }
 
@@ -698,9 +722,8 @@ public class TelaPrincipal extends JFrame{
                     texto -> SwingUtilities.invokeLater(() -> receberAdb(numero, texto)),
                     codigo -> SwingUtilities.invokeLater(() -> terminarAdb(numero, codigo)));
         } catch (IOException ex) {
-            exibirTexto("[Erro ao executar o adb: " + ex.getMessage() + "]\n");
-            JOptionPane.showMessageDialog(this, mensagemAdbNaoEncontrado(ex),
-                    "adb não encontrado", JOptionPane.ERROR_MESSAGE);
+            exibirTexto("[Error running adb: " + ex.getMessage() + "]\n");
+            oferecerLocalizarAdb(ex);
             return false;
         }
 
@@ -744,22 +767,22 @@ public class TelaPrincipal extends JFrame{
 
     private void registrarAtNaoConfigurado(String comandoAt, String nomeExibicao) {
         garantirQuebraDeLinha();
-        exibirTexto("> " + comandoAt.trim() + "\n[AT não configurado]\n");
+        exibirTexto("> " + comandoAt.trim() + "\n[AT not configured]\n");
 
         ResultadoExecucao resultado = new ResultadoExecucao(comandoAt.trim(), "", null, 0, StatusExecucao.CONCLUIDO);
         ExecucaoAvaliada execucao = new ExecucaoAvaliada(LocalTime.now().withNano(0), nomeExibicao,
-                resultado, new ResultadoAvaliado(Veredito.INFO, "AT não configurado"));
+                resultado, new ResultadoAvaliado(Veredito.INFO, "AT not configured"));
         adicionarNaTabela(execucao);
         if (registroAtual != null) {
             registroAtual.adicionar(execucao);
         }
 
         JOptionPane.showMessageDialog(this,
-                "Comandos AT no Android exigem root e a porta serial do modem,\n"
-                        + "que varia por fabricante (ex.: /dev/smd11, /dev/ttyUSB2...).\n\n"
-                        + "Configure a chave \"porta_at_android\" (e, se preciso, su_android=sim) em:\n"
-                        + configuracao.getArquivo() + "\ne reabra o programa.",
-                "AT no Android não configurado", JOptionPane.WARNING_MESSAGE);
+                "AT commands on Android require root and the modem serial port,\n"
+                        + "which varies by manufacturer (e.g. /dev/smd11, /dev/ttyUSB2...).\n\n"
+                        + "Set the \"porta_at_android\" key (and, if needed, su_android=yes) in:\n"
+                        + configuracao.getArquivo() + "\nand restart the program.",
+                "AT on Android not configured", JOptionPane.WARNING_MESSAGE);
     }
 
     private void cancelarExecucao() {
@@ -774,7 +797,7 @@ public class TelaPrincipal extends JFrame{
         try {
             conexao.enviarBytes(new byte[]{0x03});
         } catch (IOException ex) {
-            exibirTexto("\n[Erro ao enviar Ctrl+C: " + ex.getMessage() + "]\n");
+            exibirTexto("\n[Error sending Ctrl+C: " + ex.getMessage() + "]\n");
         }
         finalizarExecucao(StatusExecucao.CANCELADO);
     }
@@ -828,16 +851,16 @@ public class TelaPrincipal extends JFrame{
         switch (resultado.getStatus()) {
             case CONCLUIDO:
                 String segundos = RepositorioHistorico.segundos(resultado.getDuracaoMs());
-                rodape = "[fim | código de saída " + resultado.getCodigoSaida() + " | " + segundos + " s]";
+                rodape = "[end | exit code " + resultado.getCodigoSaida() + " | " + segundos + " s]";
                 break;
             case TEMPO_ESGOTADO:
-                rodape = "[tempo esgotado]";
+                rodape = "[timed out]";
                 break;
             case CANCELADO:
-                rodape = "[cancelado]";
+                rodape = "[cancelled]";
                 break;
             default:
-                rodape = "[conexão perdida]";
+                rodape = "[connection lost]";
                 break;
         }
         garantirQuebraDeLinha();
@@ -904,7 +927,7 @@ public class TelaPrincipal extends JFrame{
         if (valor != null) {
             return valor;
         }
-        return aguardando ? "aguardando..." : RegistroTeste.NAO_IDENTIFICADO;
+        return aguardando ? "waiting..." : RegistroTeste.NAO_IDENTIFICADO;
     }
 
     private void adicionarNaTabela(ExecucaoAvaliada execucao) {
@@ -930,7 +953,7 @@ public class TelaPrincipal extends JFrame{
         Integer codigo = r.getCodigoSaida();
 
         JPanel info = new JPanel(new GridLayout(0, 1, 0, 2));
-        info.add(new JLabel("Teste: " + execucao.getNomeTeste()
+        info.add(new JLabel("Test: " + execucao.getNomeTeste()
                 + "   (" + execucao.getHora().format(FORMATO_HORA) + ")"));
 
         JTextField campoTexto = new JTextField(r.getTextoComando());
@@ -938,13 +961,13 @@ public class TelaPrincipal extends JFrame{
         campoTexto.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         info.add(campoTexto);
 
-        JLabel labelVeredito = new JLabel("Veredito: " + a.getVeredito() + " - " + a.getDetalhe());
+        JLabel labelVeredito = new JLabel("Verdict: " + a.getVeredito() + " - " + a.getDetalhe());
         labelVeredito.setForeground(a.getVeredito().getCor());
         labelVeredito.setFont(labelVeredito.getFont().deriveFont(Font.BOLD));
         info.add(labelVeredito);
 
-        info.add(new JLabel("Código de saída: " + (codigo == null ? "-" : codigo)
-                + "   |   Duração: " + RepositorioHistorico.segundos(r.getDuracaoMs()) + " s"
+        info.add(new JLabel("Exit code: " + (codigo == null ? "-" : codigo)
+                + "   |   Duration: " + RepositorioHistorico.segundos(r.getDuracaoMs()) + " s"
                 + "   |   Status: " + r.getStatus()));
 
         JTextArea areaSaida = new JTextArea(r.getSaida(), 18, 80);
@@ -956,36 +979,36 @@ public class TelaPrincipal extends JFrame{
         painel.add(info, BorderLayout.NORTH);
         painel.add(new JScrollPane(areaSaida), BorderLayout.CENTER);
 
-        JOptionPane.showMessageDialog(this, painel, "Detalhes da execução", JOptionPane.PLAIN_MESSAGE);
+        JOptionPane.showMessageDialog(this, painel, "Execution details", JOptionPane.PLAIN_MESSAGE);
     }
 
     private void criarRegraDaSelecao() {
         if (ultimoResultado == null) {
-            JOptionPane.showMessageDialog(this, "Execute um teste primeiro.");
+            JOptionPane.showMessageDialog(this, "Run a test first.");
             return;
         }
         if (ultimoTeste == null) {
             JOptionPane.showMessageDialog(this,
-                    "A última execução não foi de um teste salvo.\n"
-                            + "Se foi um comando livre, use \"Salvar como teste\" e execute-o pela lista.");
+                    "The last execution was not a saved test.\n"
+                            + "If it was a custom command, use \"Save as test\" and run it from the list.");
             return;
         }
         if (!todosComandos.contains(ultimoTeste)) {
             JOptionPane.showMessageDialog(this,
-                    "O teste da última execução foi excluído. Execute um teste novamente.");
+                    "The test from the last execution was deleted. Run a test again.");
             return;
         }
         if (!arquivoCarregado) {
             JOptionPane.showMessageDialog(this,
-                    "O arquivo de testes não foi lido corretamente ao abrir o programa.\n"
-                            + "Para não apagar os testes existentes, nada será salvo.",
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "The tests file was not read correctly when the program started.\n"
+                            + "To avoid erasing the existing tests, nothing will be saved.",
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         String selecao = areaRetorno.getSelectedText();
         if (selecao == null || selecao.isBlank()) {
-            JOptionPane.showMessageDialog(this, "Selecione um trecho na área de retorno.");
+            JOptionPane.showMessageDialog(this, "Select some text in the output area.");
             return;
         }
 
@@ -993,39 +1016,39 @@ public class TelaPrincipal extends JFrame{
         JTextField campoPadrao = new JTextField(primeiraLinha(selecao), 35);
         campoPadrao.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         JTextField campoRotulo = new JTextField(35);
-        JCheckBox caixaRegex = new JCheckBox("Expressão regular");
+        JCheckBox caixaRegex = new JCheckBox("Regular expression");
 
         JPanel painel = new JPanel(new GridLayout(0, 1, 0, 4));
-        painel.add(new JLabel("Teste: " + ultimoTeste.getNome() + " (" + ultimoTeste.getPlataforma() + ")"));
-        painel.add(new JLabel("Tipo:"));
+        painel.add(new JLabel("Test: " + ultimoTeste.getNome() + " (" + ultimoTeste.getPlataforma() + ")"));
+        painel.add(new JLabel("Type:"));
         painel.add(boxTipo);
-        painel.add(new JLabel("Padrão (a saída deve conter):"));
+        painel.add(new JLabel("Pattern (the output must contain):"));
         painel.add(campoPadrao);
-        painel.add(new JLabel("Rótulo (opcional):"));
+        painel.add(new JLabel("Label (optional):"));
         painel.add(campoRotulo);
         painel.add(caixaRegex);
 
         String padrao;
         while (true) {
-            int opcao = JOptionPane.showConfirmDialog(this, painel, "Criar regra",
+            int opcao = JOptionPane.showConfirmDialog(this, painel, "Create rule",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
                 return;
             }
             padrao = campoPadrao.getText().trim();
             if (padrao.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "O padrão é obrigatório.");
+                JOptionPane.showMessageDialog(this, "The pattern is required.");
                 continue;
             }
             if (padrao.contains(" => ")) {
-                JOptionPane.showMessageDialog(this, "O padrão não pode conter \" => \".");
+                JOptionPane.showMessageDialog(this, "The pattern cannot contain \" => \".");
                 continue;
             }
             if (caixaRegex.isSelected()) {
                 try {
                     Pattern.compile(padrao);
                 } catch (PatternSyntaxException ex) {
-                    JOptionPane.showMessageDialog(this, "Expressão regular inválida:\n" + ex.getDescription());
+                    JOptionPane.showMessageDialog(this, "Invalid regular expression:\n" + ex.getDescription());
                     continue;
                 }
             }
@@ -1041,13 +1064,13 @@ public class TelaPrincipal extends JFrame{
         } catch (IOException ex) {
             ultimoTeste.getRegras().remove(regra);
             JOptionPane.showMessageDialog(this,
-                    "Erro ao salvar o arquivo de testes:\n" + ex.getMessage(),
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "Error saving the tests file:\n" + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         JOptionPane.showMessageDialog(this,
-                "Regra adicionada ao teste \"" + ultimoTeste.getNome() + "\":\n" + regra);
+                "Rule added to test \"" + ultimoTeste.getNome() + "\":\n" + regra);
     }
 
     private String primeiraLinha(String texto) {
@@ -1068,7 +1091,7 @@ public class TelaPrincipal extends JFrame{
             return;
         }
         if (emExecucao()) {
-            JOptionPane.showMessageDialog(this, "Aguarde a execução atual terminar.");
+            JOptionPane.showMessageDialog(this, "Wait for the current execution to finish.");
             return;
         }
 
@@ -1098,13 +1121,13 @@ public class TelaPrincipal extends JFrame{
         String nomeDigitado;
         String nomeArquivo;
         while (true) {
-            nomeDigitado = JOptionPane.showInputDialog(this, "Nome do teste:",
-                    "Encerrar registro", JOptionPane.QUESTION_MESSAGE);
+            nomeDigitado = JOptionPane.showInputDialog(this, "Test name:",
+                    "Finish recording", JOptionPane.QUESTION_MESSAGE);
 
             if (nomeDigitado == null) {
-                Object[] opcoes = {"Continuar gravando", "Descartar registro"};
+                Object[] opcoes = {"Keep recording", "Discard recording"};
                 int escolha = JOptionPane.showOptionDialog(this,
-                        "O registro ainda não foi salvo. O que deseja fazer?", "Encerrar registro",
+                        "The recording has not been saved yet. What do you want to do?", "Finish recording",
                         JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, opcoes, opcoes[0]);
                 if (escolha == 1) {
                     finalizarRegistro();
@@ -1117,15 +1140,15 @@ public class TelaPrincipal extends JFrame{
             if (!nomeArquivo.isEmpty()) {
                 break;
             }
-            JOptionPane.showMessageDialog(this, "Informe um nome válido.");
+            JOptionPane.showMessageDialog(this, "Enter a valid name.");
         }
 
         Path caminho = repositorioHistorico.caminhoPara(nomeArquivo, registroAtual.getInicio());
         if (Files.exists(caminho)) {
             int resposta = JOptionPane.showConfirmDialog(this,
-                    "Já existe o arquivo:\n" + caminho.getFileName() + "\n\nDeseja sobrescrever?\n"
-                            + "(\"Não\" salva com outro número no nome)",
-                    "Arquivo existente", JOptionPane.YES_NO_CANCEL_OPTION);
+                    "The file already exists:\n" + caminho.getFileName() + "\n\nOverwrite it?\n"
+                            + "(\"No\" saves it with another number in the name)",
+                    "File exists", JOptionPane.YES_NO_CANCEL_OPTION);
             if (resposta == JOptionPane.NO_OPTION) {
                 caminho = repositorioHistorico.proximoLivre(caminho);
             } else if (resposta != JOptionPane.YES_OPTION) {
@@ -1137,12 +1160,12 @@ public class TelaPrincipal extends JFrame{
             repositorioHistorico.salvar(caminho, registroAtual, nomeDigitado, LocalDateTime.now());
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                    "Erro ao salvar o registro:\n" + ex.getMessage() + "\n\nO registro continua ativo.",
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "Error saving the recording:\n" + ex.getMessage() + "\n\nThe recording is still active.",
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
-        JOptionPane.showMessageDialog(this, "Registro salvo em:\n" + caminho);
+        JOptionPane.showMessageDialog(this, "Recording saved to:\n" + caminho);
         finalizarRegistro();
     }
 
@@ -1160,15 +1183,15 @@ public class TelaPrincipal extends JFrame{
     private void salvarComoTeste() {
         String texto = campoLivre.getText().trim();
         if (texto.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Digite um comando no campo livre antes de salvar.");
+            JOptionPane.showMessageDialog(this, "Type a command in the custom command field before saving.");
             return;
         }
 
         if (!arquivoCarregado) {
             JOptionPane.showMessageDialog(this,
-                    "O arquivo de testes não foi lido corretamente ao abrir o programa.\n"
-                            + "Para não apagar os testes existentes, nada será salvo.",
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "The tests file was not read correctly when the program started.\n"
+                            + "To avoid erasing the existing tests, nothing will be saved.",
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1178,15 +1201,15 @@ public class TelaPrincipal extends JFrame{
         JTextField campoNome = new JTextField(25);
         JTextField campoDescricao = new JTextField(25);
         JPanel painel = new JPanel(new GridLayout(0, 1, 0, 4));
-        painel.add(new JLabel("Nome (obrigatório):"));
+        painel.add(new JLabel("Name (required):"));
         painel.add(campoNome);
-        painel.add(new JLabel("Descrição (opcional):"));
+        painel.add(new JLabel("Description (optional):"));
         painel.add(campoDescricao);
 
         String nome;
         while (true) {
             int opcao = JOptionPane.showConfirmDialog(this, painel,
-                    "Salvar como teste (" + plataforma + (ehAt ? ", AT" : "") + ")",
+                    "Save as test (" + plataforma + (ehAt ? ", AT" : "") + ")",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
                 return;
@@ -1195,7 +1218,7 @@ public class TelaPrincipal extends JFrame{
             if (!nome.isEmpty()) {
                 break;
             }
-            JOptionPane.showMessageDialog(this, "O nome é obrigatório.");
+            JOptionPane.showMessageDialog(this, "The name is required.");
         }
 
         Comando novo = new Comando(nome, plataforma, texto, campoDescricao.getText().trim());
@@ -1216,8 +1239,8 @@ public class TelaPrincipal extends JFrame{
 
         if (indiceExistente >= 0) {
             int resposta = JOptionPane.showConfirmDialog(this,
-                    "Já existe um teste \"" + nome + "\" em " + plataforma + ".\nDeseja substituir?",
-                    "Teste existente", JOptionPane.YES_NO_OPTION);
+                    "A test \"" + nome + "\" already exists on " + plataforma + ".\nReplace it?",
+                    "Test exists", JOptionPane.YES_NO_OPTION);
             if (resposta != JOptionPane.YES_OPTION) {
                 return;
             }
@@ -1230,8 +1253,8 @@ public class TelaPrincipal extends JFrame{
             repositorio.salvar(novaLista);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                    "Erro ao salvar o arquivo de testes:\n" + ex.getMessage(),
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "Error saving the tests file:\n" + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1243,15 +1266,15 @@ public class TelaPrincipal extends JFrame{
     private void editarTeste() {
         Comando selecionado = listaComandos.getSelectedValue();
         if (selecionado == null) {
-            JOptionPane.showMessageDialog(this, "Selecione um teste na lista para editar.");
+            JOptionPane.showMessageDialog(this, "Select a test from the list to edit.");
             return;
         }
 
         if (!arquivoCarregado) {
             JOptionPane.showMessageDialog(this,
-                    "O arquivo de testes não foi lido corretamente ao abrir o programa.\n"
-                            + "Para não apagar os testes existentes, nada será alterado.",
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "The tests file was not read correctly when the program started.\n"
+                            + "To avoid erasing the existing tests, nothing will be changed.",
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1261,11 +1284,11 @@ public class TelaPrincipal extends JFrame{
         JTextField campoDescricao = new JTextField(selecionado.getDescricao(), 30);
 
         JPanel painel = new JPanel(new GridLayout(0, 1, 0, 4));
-        painel.add(new JLabel("Nome (obrigatório):"));
+        painel.add(new JLabel("Name (required):"));
         painel.add(campoNome);
-        painel.add(new JLabel("Comando (obrigatório):"));
+        painel.add(new JLabel("Command (required):"));
         painel.add(campoTexto);
-        painel.add(new JLabel("Descrição (opcional):"));
+        painel.add(new JLabel("Description (optional):"));
         painel.add(campoDescricao);
 
         Plataforma plataforma = selecionado.getPlataforma();
@@ -1274,7 +1297,7 @@ public class TelaPrincipal extends JFrame{
 
         while (true) {
             int opcao = JOptionPane.showConfirmDialog(this, painel,
-                    "Editar teste (" + plataforma + ")",
+                    "Edit test (" + plataforma + ")",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
                 return;
@@ -1284,13 +1307,13 @@ public class TelaPrincipal extends JFrame{
             texto = campoTexto.getText().trim();
 
             if (nome.isEmpty() || texto.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "Nome e comando são obrigatórios.");
+                JOptionPane.showMessageDialog(this, "Name and command are required.");
                 continue;
             }
 
             if (existeOutroComNome(nome, plataforma, selecionado)) {
                 JOptionPane.showMessageDialog(this,
-                        "Já existe outro teste \"" + nome + "\" em " + plataforma + ".");
+                        "Another test \"" + nome + "\" already exists on " + plataforma + ".");
                 continue;
             }
             break;
@@ -1310,8 +1333,8 @@ public class TelaPrincipal extends JFrame{
             repositorio.salvar(novaLista);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                    "Erro ao salvar o arquivo de testes:\n" + ex.getMessage(),
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "Error saving the tests file:\n" + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1335,22 +1358,22 @@ public class TelaPrincipal extends JFrame{
     private void excluirTeste() {
         Comando selecionado = listaComandos.getSelectedValue();
         if (selecionado == null) {
-            JOptionPane.showMessageDialog(this, "Selecione um teste na lista para excluir.");
+            JOptionPane.showMessageDialog(this, "Select a test from the list to delete.");
             return;
         }
 
         if (!arquivoCarregado) {
             JOptionPane.showMessageDialog(this,
-                    "O arquivo de testes não foi lido corretamente ao abrir o programa.\n"
-                            + "Para não apagar os testes existentes, nada será alterado.",
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "The tests file was not read correctly when the program started.\n"
+                            + "To avoid erasing the existing tests, nothing will be changed.",
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
         int resposta = JOptionPane.showConfirmDialog(this,
-                "Excluir o teste \"" + selecionado.getNome() + "\" (" + selecionado.getPlataforma() + ")?\n"
-                        + "Esta ação não pode ser desfeita.",
-                "Excluir teste", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                "Delete the test \"" + selecionado.getNome() + "\" (" + selecionado.getPlataforma() + ")?\n"
+                        + "This action cannot be undone.",
+                "Delete test", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
         if (resposta != JOptionPane.YES_OPTION) {
             return;
         }
@@ -1364,8 +1387,8 @@ public class TelaPrincipal extends JFrame{
             repositorio.salvar(novaLista);
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                    "Erro ao salvar o arquivo de testes:\n" + ex.getMessage(),
-                    "Erro", JOptionPane.ERROR_MESSAGE);
+                    "Error saving the tests file:\n" + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
@@ -1381,7 +1404,7 @@ public class TelaPrincipal extends JFrame{
     private void alternarConexao() {
         if (conexao.estaConectado()) {
             conexao.desconectar();
-            atualizarStatus(false, "Desconectado");
+            atualizarStatus(false, "Disconnected");
             // Sem Telnet, só os itens do Prolin saem da fila
             filaComandos.removeIf(c -> c.plataforma == Plataforma.PROLIN);
             finalizarExecucao(StatusExecucao.CONEXAO_PERDIDA);
@@ -1391,7 +1414,7 @@ public class TelaPrincipal extends JFrame{
 
         String host = campoHost.getText().trim();
         if (host.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Informe o IP do terminal.");
+            JOptionPane.showMessageDialog(this, "Enter the terminal IP.");
             return;
         }
 
@@ -1399,12 +1422,12 @@ public class TelaPrincipal extends JFrame{
         try {
             porta = Integer.parseInt(campoPorta.getText().trim());
         } catch (NumberFormatException ex) {
-            JOptionPane.showMessageDialog(this, "Porta inválida.");
+            JOptionPane.showMessageDialog(this, "Invalid port.");
             return;
         }
 
         botaoConectar.setEnabled(false);
-        labelStatus.setText("Conectando...");
+        labelStatus.setText("Connecting...");
         labelStatus.setForeground(Color.ORANGE);
 
         loginEnviado = false;
@@ -1415,7 +1438,7 @@ public class TelaPrincipal extends JFrame{
                 conexao.conectar(host, porta,
                         texto -> SwingUtilities.invokeLater(() -> mostrarRetorno(texto)),
                         () -> SwingUtilities.invokeLater(() -> {
-                            atualizarStatus(false, "Desconectado");
+                            atualizarStatus(false, "Disconnected");
                             // Sem Telnet, só os itens do Prolin saem da fila
                             filaComandos.removeIf(c -> c.plataforma == Plataforma.PROLIN);
                             finalizarExecucao(StatusExecucao.CONEXAO_PERDIDA);
@@ -1423,11 +1446,11 @@ public class TelaPrincipal extends JFrame{
                         }));
                 SwingUtilities.invokeLater(() -> {
                     enderecoConectado = host + ":" + porta;
-                    atualizarStatus(true, "Conectado a " + enderecoConectado);
+                    atualizarStatus(true, "Connected to " + enderecoConectado);
                 });
             } catch (IOException ex) {
                 SwingUtilities.invokeLater(() ->
-                        atualizarStatus(false, "Falha: " + ex.getMessage()));
+                        atualizarStatus(false, "Failed: " + ex.getMessage()));
             }
         }).start();
     }
@@ -1448,7 +1471,7 @@ public class TelaPrincipal extends JFrame{
             try {
                 conexao.enviar(campoLogin.getText());
             } catch (IOException ex) {
-                areaRetorno.append("\n[Erro ao enviar login: " + ex.getMessage() + "]\n");
+                areaRetorno.append("\n[Error sending login: " + ex.getMessage() + "]\n");
             }
         }
     }
@@ -1471,7 +1494,7 @@ public class TelaPrincipal extends JFrame{
     private void atualizarStatus(boolean conectado, String texto) {
         labelStatus.setText(texto);
         labelStatus.setForeground(conectado ? new Color(0, 128, 0) : Color.RED);
-        botaoConectar.setText(conectado ? "Desconectar" : "Conectar");
+        botaoConectar.setText(conectado ? "Disconnect" : "Connect");
         botaoConectar.setEnabled(true);
     }
 }

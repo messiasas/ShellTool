@@ -4,7 +4,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-// No testes.txt: falha=re:<regex> => rótulo   (falha_sem = FALHA quando o padrão NÃO aparece)
 public class Regra {
 
     private static final String PREFIXO_REGEX = "re:";
@@ -85,7 +84,7 @@ public class Regra {
             if (posicao >= 0 || (regex && compilar() == null)) {
                 return null;
             }
-            return rotulo.isEmpty() ? "Não encontrado: " + padrao : rotulo;
+            return rotulo.isEmpty() ? "Not found: " + padrao : rotulo;
         }
 
         if (posicao < 0) {
@@ -100,7 +99,7 @@ public class Regra {
                 padraoCompilado = Pattern.compile(padrao, Pattern.MULTILINE);
             } catch (PatternSyntaxException e) {
                 regexInvalida = true;
-                System.err.println("Regra ignorada, expressão regular inválida: " + padrao
+                System.err.println("Rule ignored, invalid regular expression: " + padrao
                         + " (" + e.getDescription() + ")");
             }
         }
@@ -142,6 +141,6 @@ public class Regra {
 
     @Override
     public String toString() {
-        return (ausencia ? "FALHA_SEM" : tipo.name()) + ": " + paraTexto();
+        return (ausencia ? "FAIL_IF_MISSING" : tipo.toString()) + ": " + paraTexto();
     }
 }

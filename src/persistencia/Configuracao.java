@@ -6,13 +6,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class Configuracao {
 
     private static final String PADRAO_ADB = "adb";
     private static final String PADRAO_PORTA_AT = "";
-    private static final String PADRAO_SU = "nao";
+    private static final String PADRAO_SU = "no";
     private static final String PADRAO_CMD_SN = "getprop ro.serialno";
     private static final String PADRAO_CMD_PN = "getprop ro.fac.pn";
 
@@ -60,20 +61,20 @@ public class Configuracao {
     private void criarPadrao() throws IOException {
         Files.createDirectories(arquivo.getParent());
         String texto = String.join("\n",
-                "# Configurações do ShellTool (formato chave=valor; linhas com # são comentários)",
+                "# ShellTool settings (key=value format; lines starting with # are comments)",
                 "",
-                "# Caminho do adb. \"adb\" usa o PATH do sistema.",
-                "# Exemplo: adb=C:\\platform-tools\\adb.exe",
+                "# Path to adb. \"adb\" uses the system PATH.",
+                "# Example: adb=C:\\platform-tools\\adb.exe",
                 "adb=" + PADRAO_ADB,
                 "",
-                "# Porta serial do modem para comandos AT no Android (ex.: /dev/smd11).",
-                "# Varia por fabricante e exige root. Vazio = AT no Android desativado.",
+                "# Modem serial port for AT commands on Android (e.g. /dev/smd11).",
+                "# Varies by manufacturer and requires root. Empty = AT on Android disabled.",
                 "porta_at_android=" + PADRAO_PORTA_AT,
                 "",
-                "# sim = executa a linha do AT via su -c (necessário para acessar a porta do modem)",
+                "# yes = runs the AT line via su -c (needed to access the modem port)",
                 "su_android=" + PADRAO_SU,
                 "",
-                "# Comandos usados pelo \"Registrar teste\" no Android para ler SN e PN",
+                "# Commands used by \"Record test\" on Android to read SN and PN",
                 "cmd_sn_android=" + PADRAO_CMD_SN,
                 "cmd_pn_android=" + PADRAO_CMD_PN,
                 "");
@@ -94,7 +95,8 @@ public class Configuracao {
     }
 
     public boolean isSuAndroid() {
-        return valor("su_android", PADRAO_SU).equalsIgnoreCase("sim");
+        String su = valor("su_android", PADRAO_SU);
+        return su.equalsIgnoreCase("yes") || su.equalsIgnoreCase("sim");
     }
 
     public String getCmdSnAndroid() {
@@ -103,5 +105,22 @@ public class Configuracao {
 
     public String getCmdPnAndroid() {
         return valor("cmd_pn_android", PADRAO_CMD_PN);
+    }
+
+    public void setAdb(String caminho) throws IOException {
+        List<String> linhas = Files.readAllLines(arquivo, StandardCharsets.UTF_8);
+        boolean trocou = false;
+        for (int i = 0; i < linhas.size(); i++) {
+            if (linhas.get(i).replace("\uFEFF", "").trim().startsWith("adb=")) {
+                linhas.set(i, "adb=" + caminho);
+                trocou = true;
+                break;
+            }
+        }
+        if (!trocou) {
+            linhas.add("adb=" + caminho);
+        }
+        Files.write(arquivo, linhas, StandardCharsets.UTF_8);
+        valores.put("adb", caminho);
     }
 }

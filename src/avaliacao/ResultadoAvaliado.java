@@ -1,5 +1,6 @@
 package avaliacao;
 
+// classe responsável por anotar o resultado final e o motivo
 public class ResultadoAvaliado {
 
     private final Veredito veredito;

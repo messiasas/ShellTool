@@ -16,8 +16,8 @@ import java.util.Locale;
 
 public class RepositorioHistorico {
 
-    private static final DateTimeFormatter FORMATO_NOME = DateTimeFormatter.ofPattern("dd-MM-yy");
-    private static final DateTimeFormatter FORMATO_DATA = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    private static final DateTimeFormatter FORMATO_NOME = DateTimeFormatter.ofPattern("MM-dd-yy");
+    private static final DateTimeFormatter FORMATO_DATA = DateTimeFormatter.ofPattern("MM/dd/yyyy");
     private static final DateTimeFormatter FORMATO_HORA = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final Path pasta;
@@ -56,20 +56,20 @@ public class RepositorioHistorico {
 
     private String montarConteudo(RegistroTeste registro, String nomeTeste, LocalDateTime fim) {
         StringBuilder t = new StringBuilder();
-        t.append("=== Registro de teste: ").append(nomeTeste).append(" ===\n");
-        t.append("Data: ").append(registro.getInicio().format(FORMATO_DATA))
-                .append("   Início: ").append(registro.getInicio().format(FORMATO_HORA))
-                .append("   Fim: ").append(fim.format(FORMATO_HORA)).append('\n');
+        t.append("=== Test record: ").append(nomeTeste).append(" ===\n");
+        t.append("Date: ").append(registro.getInicio().format(FORMATO_DATA))
+                .append("   Start: ").append(registro.getInicio().format(FORMATO_HORA))
+                .append("   End: ").append(fim.format(FORMATO_HORA)).append('\n');
         boolean android = registro.getPlataforma() == Plataforma.ANDROID;
-        t.append("Plataforma: ").append(registro.getPlataforma())
-                .append(android ? " | Dispositivo: " : " | Endereço: ")
+        t.append("Platform: ").append(registro.getPlataforma())
+                .append(android ? " | Device: " : " | Address: ")
                 .append(registro.getAlvo()).append('\n');
         t.append("PN: ").append(valorOuNaoIdentificado(registro.getPn())).append('\n');
         t.append("SN: ").append(valorOuNaoIdentificado(registro.getSn())).append('\n');
-        t.append("Resumo: ")
+        t.append("Summary: ")
                 .append(registro.contar(Veredito.OK)).append(" OK, ")
-                .append(registro.contar(Veredito.ALERTA)).append(" ALERTA, ")
-                .append(registro.contar(Veredito.FALHA)).append(" FALHA, ")
+                .append(registro.contar(Veredito.ALERTA)).append(" WARNING, ")
+                .append(registro.contar(Veredito.FALHA)).append(" FAIL, ")
                 .append(registro.contar(Veredito.INFO)).append(" INFO\n");
 
         for (ExecucaoAvaliada e : registro.getExecucoes()) {
@@ -79,12 +79,12 @@ public class RepositorioHistorico {
             t.append('\n');
             t.append("--- [").append(e.getHora().format(FORMATO_HORA)).append("] ")
                     .append(e.getNomeTeste()).append(" ---\n");
-            t.append("Comando: ").append(r.getTextoComando()).append('\n');
-            t.append("Veredito: ").append(e.getAvaliacao().getVeredito())
+            t.append("Command: ").append(r.getTextoComando()).append('\n');
+            t.append("Verdict: ").append(e.getAvaliacao().getVeredito())
                     .append(" - ").append(e.getAvaliacao().getDetalhe()).append('\n');
-            t.append("Código de saída: ").append(codigo == null ? "-" : codigo.toString())
-                    .append(" | Duração: ").append(segundos(r.getDuracaoMs())).append(" s\n");
-            t.append("Saída:\n").append(r.getSaida());
+            t.append("Exit code: ").append(codigo == null ? "-" : codigo.toString())
+                    .append(" | Duration: ").append(segundos(r.getDuracaoMs())).append(" s\n");
+            t.append("Output:\n").append(r.getSaida());
             if (!r.getSaida().endsWith("\n")) {
                 t.append('\n');
             }
@@ -97,6 +97,6 @@ public class RepositorioHistorico {
     }
 
     public static String segundos(long ms) {
-        return String.format(Locale.forLanguageTag("pt-BR"), "%.1f", ms / 1000.0);
+        return String.format(Locale.US, "%.1f", ms / 1000.0);
     }
 }

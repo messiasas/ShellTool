@@ -7,9 +7,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+// classe responsavel pelo cabeçalho basico de cada teste
 public class RegistroTeste {
 
-    public static final String NAO_IDENTIFICADO = "não identificado";
+    public static final String NAO_IDENTIFICADO = "not identified";
 
     private final LocalDateTime inicio;
     private final Plataforma plataforma;

@@ -32,6 +32,14 @@ public class Comando {
         return nome;
     }
 
+    public void setNome(String nome) {
+        this.nome = nome;
+    }
+
+    public void setDescricao(String descricao) {
+        this.descricao = descricao;
+    }
+
     public Plataforma getPlataforma() {
         return plataforma;
     }

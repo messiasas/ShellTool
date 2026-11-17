@@ -19,7 +19,7 @@ public class PastaDados {
             try {
                 Files.move(antiga, pasta);
             } catch (IOException e) {
-                System.err.println("Não foi possível renomear " + antiga + " para " + pasta + ": " + e.getMessage());
+                System.err.println("Could not rename " + antiga + " to " + pasta + ": " + e.getMessage());
             }
         }
         return pasta;

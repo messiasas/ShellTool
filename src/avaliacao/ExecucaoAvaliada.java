@@ -4,6 +4,7 @@ import model.ResultadoExecucao;
 
 import java.time.LocalTime;
 
+// classe responsável por capturar os resultados dos testes
 public class ExecucaoAvaliada {
 
     private final LocalTime hora;
