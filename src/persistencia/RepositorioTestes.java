@@ -16,20 +16,62 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
+/*
+Ler o testes.txt e transformar cada teste num objeto Comando.
+Gravar a lista de volta no arquivo quando você cria, edita ou exclui um teste.
+Criar os testes padrão (pings, rotas, AT…) que vêm prontos com o programa.*/
 public class RepositorioTestes {
 
     private static final String INICIO_BLOCO = "[teste]";
+    private static final String SUFIXO_AT_ANDROID = " (requires root and AT port in config.txt)";
 
     private final Path pasta;
     private final Path arquivo;
+    private final Path arquivoCadernos;
 
     public RepositorioTestes() {
         pasta = PastaDados.obter();
         arquivo = pasta.resolve("testes.txt");
+        arquivoCadernos = pasta.resolve("cadernos.txt");
     }
 
     public Path getArquivo() {
         return arquivo;
+    }
+
+    /* Lista de cadernos: o padrão (Telecom) primeiro, depois os do cadernos.txt (um por linha)
+    e, por fim, qualquer caderno usado em testes.txt que não esteja no arquivo.
+    O cadernos.txt existe para que um caderno recém-criado, ainda sem testes, não se perca. */
+    public List<String> carregarCadernos(List<Comando> testes) throws IOException {
+        List<String> cadernos = new ArrayList<>();
+        cadernos.add(Comando.CADERNO_PADRAO);
+
+        if (Files.exists(arquivoCadernos)) {
+            for (String linha : Files.readAllLines(arquivoCadernos, StandardCharsets.UTF_8)) {
+                String nome = linha.replace("\uFEFF", "").trim();
+                if (!nome.isEmpty() && !nome.startsWith("#")) {
+                    adicionarCaderno(cadernos, nome);
+                }
+            }
+        }
+        for (Comando c : testes) {
+            adicionarCaderno(cadernos, c.getCaderno());
+        }
+        return cadernos;
+    }
+
+    public void salvarCadernos(List<String> cadernos) throws IOException {
+        Files.createDirectories(pasta);
+        Files.write(arquivoCadernos, cadernos, StandardCharsets.UTF_8);
+    }
+
+    private static void adicionarCaderno(List<String> cadernos, String nome) {
+        for (String existente : cadernos) {
+            if (existente.equalsIgnoreCase(nome)) {
+                return;
+            }
+        }
+        cadernos.add(nome);
     }
 
     public List<Comando> carregar() throws IOException {
@@ -68,7 +110,6 @@ public class RepositorioTestes {
                     continue;
                 }
 
-                // Separa no primeiro "=": o comando pode conter outros
                 int posicao = linha.indexOf('=');
                 if (posicao < 0) {
                     continue;
@@ -79,6 +120,7 @@ public class RepositorioTestes {
                 switch (chave) {
                     case "nome":        bloco.nome = valor; break;
                     case "plataforma":  bloco.plataforma = valor; break;
+                    case "caderno":     bloco.caderno = valor; break;
                     case "comando":     bloco.comando = valor; break;
                     case "descricao":   bloco.descricao = valor; break;
                     case "informativo": bloco.informativo = sim(valor); break;
@@ -98,9 +140,7 @@ public class RepositorioTestes {
 
         adicionarSeValido(bloco, testes);
 
-        boolean traduziu = MigracaoTestesPadrao.traduzir(testes);
-        boolean completou = completarComPadrao(testes);
-        if (traduziu || completou) {
+        if (completarComPadrao(testes)) {
             try {
                 salvar(testes);
             } catch (IOException e) {
@@ -125,6 +165,7 @@ public class RepositorioTestes {
                 escritor.newLine();
                 escreverCampo(escritor, "nome", c.getNome());
                 escreverCampo(escritor, "plataforma", c.getPlataforma().name());
+                escreverCampo(escritor, "caderno", c.getCaderno());
                 escreverCampo(escritor, "comando", c.getTxtComando());
                 escreverCampo(escritor, "descricao", c.getDescricao());
 
@@ -181,6 +222,7 @@ public class RepositorioTestes {
         Comando comando = new Comando(bloco.nome, plataforma, bloco.comando, descricao);
         comando.setRegras(bloco.regras);
         comando.setInformativo(bloco.informativo);
+        comando.setCaderno(bloco.caderno);
 
         if (bloco.tipo != null && bloco.tipo.equalsIgnoreCase("AT")) {
             comando.setTipo(TipoComando.AT);
@@ -363,7 +405,7 @@ public class RepositorioTestes {
                 "Equivalent to AT+CSQ",
                 "informativo=sim");
 
-        testesAt(p, ANDROID, MigracaoTestesPadrao.SUFIXO_AT_ANDROID);
+        testesAt(p, ANDROID, SUFIXO_AT_ANDROID);
 
         return p;
     }
@@ -469,6 +511,7 @@ public class RepositorioTestes {
     private static class Bloco {
         String nome;
         String plataforma;
+        String caderno;
         String comando;
         String descricao;
         List<Regra> regras = new ArrayList<>();

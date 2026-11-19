@@ -14,6 +14,10 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
+/*O RepositorioHistorico salva o relatório de um teste gravado em um arquivo .txt, na pasta ShellTool\historico\.*/
+
+/*entra em ação quando você clica em Record test, roda os comandos e depois clica em Finish. Nesse momento, tudo o que ficou guardado
+ no RegistroTeste (que você já viu em avaliacao) vira um arquivo de texto.*/
 public class RepositorioHistorico {
 
     private static final DateTimeFormatter FORMATO_NOME = DateTimeFormatter.ofPattern("MM-dd-yy");
@@ -34,6 +38,7 @@ public class RepositorioHistorico {
         return pasta.resolve(nomeLimpo + "-" + inicio.format(FORMATO_NOME) + ".txt");
     }
 
+    // evita escrever um mesmo teste com o mesmo nome de um ja existente. exemplo: Teste-11-19-26 (3).txt
     public Path proximoLivre(Path caminho) {
         String nome = caminho.getFileName().toString();
         String base = nome.substring(0, nome.length() - ".txt".length());
@@ -46,6 +51,10 @@ public class RepositorioHistorico {
         return candidato;
     }
 
+    /*cria a pasta historico se ainda nao existir.
+    * pede o texto completo no relatorio ao montarConteudo()
+    * converte as quebras de linha para padrao windows
+    * grava o arquivo em UTF-8*/
     public void salvar(Path caminho, RegistroTeste registro, String nomeTeste, LocalDateTime fim)
             throws IOException {
         Files.createDirectories(pasta);
@@ -54,6 +63,7 @@ public class RepositorioHistorico {
         Files.writeString(caminho, conteudo, StandardCharsets.UTF_8);
     }
 
+    // screver texto, linha por linha
     private String montarConteudo(RegistroTeste registro, String nomeTeste, LocalDateTime fim) {
         StringBuilder t = new StringBuilder();
         t.append("=== Test record: ").append(nomeTeste).append(" ===\n");
@@ -92,10 +102,12 @@ public class RepositorioHistorico {
         return t.toString();
     }
 
+    //se o PN ou o SN não foi lido, escreve not identified em vez de deixar em branco ou escrever null
     private static String valorOuNaoIdentificado(String valor) {
         return (valor == null || valor.isEmpty()) ? RegistroTeste.NAO_IDENTIFICADO : valor;
     }
 
+    //segundos converte milissegundos em segundos com uma casa decimal
     public static String segundos(long ms) {
         return String.format(Locale.US, "%.1f", ms / 1000.0);
     }

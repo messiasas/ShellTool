@@ -42,6 +42,9 @@ import javax.swing.filechooser.FileNameExtensionFilter;
 public class TelaPrincipal extends JFrame{
 
     private JComboBox<Plataforma> boxPlataforma;
+    private JComboBox<String> boxCaderno;
+    private JButton botaoNovoCaderno;
+    private List<String> cadernos = new ArrayList<>();
     private DefaultListModel<Comando> modeloLista;
     private JList<Comando> listaComandos;
     private List<Comando> todosComandos = new ArrayList<>();
@@ -202,8 +205,22 @@ public class TelaPrincipal extends JFrame{
         modeloLista = new DefaultListModel<>();
         listaComandos = new JList<>(modeloLista);
         JScrollPane scrollLista = new JScrollPane(listaComandos);
-        scrollLista.setPreferredSize(new Dimension(180, 0));
-        add(scrollLista, BorderLayout.WEST);
+
+        // Caixa de cadernos acima da lista: a lista mostra só os testes do caderno e da plataforma escolhidos
+        JPanel painelCaderno = new JPanel(new BorderLayout(4, 2));
+        painelCaderno.add(new JLabel("Notebook"), BorderLayout.NORTH);
+        boxCaderno = new JComboBox<>();
+        painelCaderno.add(boxCaderno, BorderLayout.CENTER);
+        botaoNovoCaderno = new JButton("New");
+        botaoNovoCaderno.setToolTipText("Create a new notebook");
+        painelCaderno.add(botaoNovoCaderno, BorderLayout.EAST);
+
+        JPanel painelLista = new JPanel(new BorderLayout(0, 4));
+        painelLista.setBorder(BorderFactory.createEmptyBorder(4, 4, 0, 0));
+        painelLista.add(painelCaderno, BorderLayout.NORTH);
+        painelLista.add(scrollLista, BorderLayout.CENTER);
+        painelLista.setPreferredSize(new Dimension(220, 0));
+        add(painelLista, BorderLayout.WEST);
 
         JPanel painelDetalhes = new JPanel();
         painelDetalhes.setLayout(new BoxLayout(painelDetalhes, BoxLayout.Y_AXIS));
@@ -307,9 +324,12 @@ public class TelaPrincipal extends JFrame{
         add(painelCentral, BorderLayout.CENTER);
 
         carregarTestes();
+        carregarCadernos();
         atualizarLista();
 
         boxPlataforma.addActionListener(e -> aoTrocarPlataforma());
+        boxCaderno.addActionListener(e -> atualizarLista());
+        botaoNovoCaderno.addActionListener(e -> criarCaderno());
         botaoAtualizar.addActionListener(e -> atualizarDispositivos());
         listaComandos.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -580,12 +600,87 @@ public class TelaPrincipal extends JFrame{
         }
     }
 
+    private void carregarCadernos() {
+        try {
+            cadernos = repositorio.carregarCadernos(todosComandos);
+        } catch (IOException ex) {
+            cadernos = new ArrayList<>();
+            cadernos.add(Comando.CADERNO_PADRAO);
+            for (Comando c : todosComandos) {
+                if (!cadernos.contains(c.getCaderno())) {
+                    cadernos.add(c.getCaderno());
+                }
+            }
+            JOptionPane.showMessageDialog(this,
+                    "Error reading the notebooks file:\n" + ex.getMessage(),
+                    "Warning", JOptionPane.WARNING_MESSAGE);
+        }
+        boxCaderno.removeAllItems();
+        for (String caderno : cadernos) {
+            boxCaderno.addItem(caderno);
+        }
+        boxCaderno.setSelectedItem(Comando.CADERNO_PADRAO);
+    }
+
+    private String cadernoSelecionado() {
+        String caderno = (String) boxCaderno.getSelectedItem();
+        return caderno == null ? Comando.CADERNO_PADRAO : caderno;
+    }
+
+    private void criarCaderno() {
+        String nome;
+        while (true) {
+            nome = JOptionPane.showInputDialog(this, "Notebook name:", "New notebook",
+                    JOptionPane.QUESTION_MESSAGE);
+            if (nome == null) {
+                return;
+            }
+            nome = nome.trim();
+            if (nome.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "Enter a name.");
+                continue;
+            }
+            String existente = cadernoComNome(nome);
+            if (existente != null) {
+                JOptionPane.showMessageDialog(this, "The notebook \"" + existente + "\" already exists.");
+                boxCaderno.setSelectedItem(existente);
+                return;
+            }
+            break;
+        }
+
+        List<String> novaLista = new ArrayList<>(cadernos);
+        novaLista.add(nome);
+        try {
+            repositorio.salvarCadernos(novaLista);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Error saving the notebooks file:\n" + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        cadernos = novaLista;
+        boxCaderno.addItem(nome);
+        boxCaderno.setSelectedItem(nome);
+    }
+
+    private String cadernoComNome(String nome) {
+        for (String c : cadernos) {
+            if (c.equalsIgnoreCase(nome)) {
+                return c;
+            }
+        }
+        return null;
+    }
+
     private void atualizarLista(){
         Plataforma escolhida = (Plataforma) boxPlataforma.getSelectedItem();
+        String caderno = cadernoSelecionado();
         modeloLista.clear();
 
         for(Comando c: todosComandos){
-            if(c.getPlataforma() == escolhida){
+            if(c.getPlataforma() == escolhida && c.getCaderno().equals(caderno)){
                 modeloLista.addElement(c);
             }
         }
@@ -1196,6 +1291,7 @@ public class TelaPrincipal extends JFrame{
         }
 
         Plataforma plataforma = (Plataforma) boxPlataforma.getSelectedItem();
+        String caderno = cadernoSelecionado();
         boolean ehAt = caixaAt.isSelected();
 
         JTextField campoNome = new JTextField(25);
@@ -1209,7 +1305,7 @@ public class TelaPrincipal extends JFrame{
         String nome;
         while (true) {
             int opcao = JOptionPane.showConfirmDialog(this, painel,
-                    "Save as test (" + plataforma + (ehAt ? ", AT" : "") + ")",
+                    "Save as test (" + caderno + ", " + plataforma + (ehAt ? ", AT" : "") + ")",
                     JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (opcao != JOptionPane.OK_OPTION) {
                 return;
@@ -1222,6 +1318,7 @@ public class TelaPrincipal extends JFrame{
         }
 
         Comando novo = new Comando(nome, plataforma, texto, campoDescricao.getText().trim());
+        novo.setCaderno(caderno);
         if (ehAt) {
             novo.setTipo(TipoComando.AT);
         }
@@ -1239,7 +1336,8 @@ public class TelaPrincipal extends JFrame{
 
         if (indiceExistente >= 0) {
             int resposta = JOptionPane.showConfirmDialog(this,
-                    "A test \"" + nome + "\" already exists on " + plataforma + ".\nReplace it?",
+                    "A test \"" + nome + "\" already exists on " + plataforma
+                            + " (notebook " + novaLista.get(indiceExistente).getCaderno() + ").\nReplace it?",
                     "Test exists", JOptionPane.YES_NO_OPTION);
             if (resposta != JOptionPane.YES_OPTION) {
                 return;
@@ -1282,6 +1380,8 @@ public class TelaPrincipal extends JFrame{
         JTextField campoTexto = new JTextField(selecionado.getTxtComando(), 30);
         campoTexto.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
         JTextField campoDescricao = new JTextField(selecionado.getDescricao(), 30);
+        JComboBox<String> boxCadernoTeste = new JComboBox<>(cadernos.toArray(new String[0]));
+        boxCadernoTeste.setSelectedItem(selecionado.getCaderno());
 
         JPanel painel = new JPanel(new GridLayout(0, 1, 0, 4));
         painel.add(new JLabel("Name (required):"));
@@ -1290,6 +1390,8 @@ public class TelaPrincipal extends JFrame{
         painel.add(campoTexto);
         painel.add(new JLabel("Description (optional):"));
         painel.add(campoDescricao);
+        painel.add(new JLabel("Notebook:"));
+        painel.add(boxCadernoTeste);
 
         Plataforma plataforma = selecionado.getPlataforma();
         String nome;
@@ -1324,6 +1426,7 @@ public class TelaPrincipal extends JFrame{
         editado.setInformativo(selecionado.isInformativo());
         editado.setTipo(selecionado.getTipo());
         editado.setEsperaSegundos(selecionado.getEsperaSegundos());
+        editado.setCaderno((String) boxCadernoTeste.getSelectedItem());
 
         List<Comando> novaLista = new ArrayList<>(todosComandos);
         int indice = novaLista.indexOf(selecionado);
@@ -1341,6 +1444,10 @@ public class TelaPrincipal extends JFrame{
         todosComandos = novaLista;
         if (ultimoTeste == selecionado) {
             ultimoTeste = editado;
+        }
+        // Se o teste mudou de caderno, a caixa acompanha para ele continuar visível
+        if (!editado.getCaderno().equals(cadernoSelecionado())) {
+            boxCaderno.setSelectedItem(editado.getCaderno());
         }
         atualizarLista();
         listaComandos.setSelectedValue(editado, true);

@@ -21,6 +21,11 @@ public class Comando {
 
     private Integer esperaSegundos = ESPERA_PADRAO;
 
+    // Caderno (grupo de testes) ao qual o teste pertence; testes sem caderno vão para o padrão
+    public static final String CADERNO_PADRAO = "Telecom";
+
+    private String caderno = CADERNO_PADRAO;
+
     public Comando(String nome, Plataforma plataforma, String textoComando, String descricao) {
         this.nome = nome;
         this.plataforma = plataforma;
@@ -82,6 +87,14 @@ public class Comando {
 
     public boolean isAt() {
         return tipo == TipoComando.AT;
+    }
+
+    public String getCaderno() {
+        return caderno;
+    }
+
+    public void setCaderno(String caderno) {
+        this.caderno = (caderno == null || caderno.isBlank()) ? CADERNO_PADRAO : caderno.trim();
     }
 
     public Integer getEsperaSegundos() {

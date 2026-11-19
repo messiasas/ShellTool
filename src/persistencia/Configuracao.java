@@ -9,6 +9,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+//lê o arquivo config.txt (formato chave=valor) e oferece os valores para o resto do programa
+
+/*o congif.txt serve para a ferramenta saber qual comando usar, se for diferente, o usuario podera configurar manualmente*/
 public class Configuracao {
 
     private static final String PADRAO_ADB = "adb";
@@ -18,8 +21,11 @@ public class Configuracao {
     private static final String PADRAO_CMD_PN = "getprop ro.fac.pn";
 
     private final Path arquivo;
+
+    //mapa das chaves para entender o chave=valor
     private final Map<String, String> valores = new HashMap<>();
 
+    //arquivo guarda o caminho completo, por exemplo
     public Configuracao() {
         arquivo = PastaDados.obter().resolve("config.txt");
     }
@@ -30,11 +36,14 @@ public class Configuracao {
 
     public void carregar() throws IOException {
         valores.clear();
+
+        // nao existe?
         if (!Files.exists(arquivo)) {
             criarPadrao();
             return;
         }
 
+        //Abrir o arquivo
         try (BufferedReader leitor = Files.newBufferedReader(arquivo, StandardCharsets.UTF_8)) {
             String linha;
             boolean primeiraLinha = true;
@@ -58,6 +67,7 @@ public class Configuracao {
         }
     }
 
+    //a geração do arquivo inicial
     private void criarPadrao() throws IOException {
         Files.createDirectories(arquivo.getParent());
         String texto = String.join("\n",
@@ -81,6 +91,8 @@ public class Configuracao {
         Files.writeString(arquivo, texto.replace("\n", "\r\n"), StandardCharsets.UTF_8);
     }
 
+    //O valor() devolve o que o usuário escreveu no config.txt para aquela chave ou,
+    // se ela estiver vazia ou não existir, devolve o valor padrão, sem alterar nada.
     private String valor(String chave, String padrao) {
         String v = valores.get(chave);
         return (v == null || v.isEmpty()) ? padrao : v;
@@ -89,11 +101,13 @@ public class Configuracao {
     public String getAdb() {
         return valor("adb", PADRAO_ADB);
     }
-
     public String getPortaAtAndroid() {
         return valor("porta_at_android", PADRAO_PORTA_AT);
     }
 
+
+    /*O isSuAndroid() lê a opção su_android do config.txt e devolve true se ela for “yes” ou “sim”
+    (e false em qualquer outro caso), para o programa saber se deve rodar os comandos AT no Android com su -c, como root.*/
     public boolean isSuAndroid() {
         String su = valor("su_android", PADRAO_SU);
         return su.equalsIgnoreCase("yes") || su.equalsIgnoreCase("sim");
@@ -102,7 +116,6 @@ public class Configuracao {
     public String getCmdSnAndroid() {
         return valor("cmd_sn_android", PADRAO_CMD_SN);
     }
-
     public String getCmdPnAndroid() {
         return valor("cmd_pn_android", PADRAO_CMD_PN);
     }

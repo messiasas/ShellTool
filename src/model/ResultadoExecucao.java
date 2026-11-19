@@ -1,5 +1,6 @@
 package model;
 
+/*guarda o que aconteceu quando um comando foi executado: o que o terminal respondeu, como terminou e quanto tempo levou.*/
 public class ResultadoExecucao {
 
     private final String textoComando;
