@@ -19,6 +19,9 @@ public class Configuracao {
     private static final String PADRAO_SU = "no";
     private static final String PADRAO_CMD_SN = "getprop ro.serialno";
     private static final String PADRAO_CMD_PN = "getprop ro.fac.pn";
+    private static final String PADRAO_MODO_AT_ANDROID = "serial";
+    private static final String PADRAO_PORTA_SERIAL_AT = "";
+    private static final String PADRAO_BAUD_SERIAL_AT = "115200";
 
     private final Path arquivo;
 
@@ -77,8 +80,22 @@ public class Configuracao {
                 "# Example: adb=C:\\platform-tools\\adb.exe",
                 "adb=" + PADRAO_ADB,
                 "",
-                "# Modem serial port for AT commands on Android (e.g. /dev/smd11).",
-                "# Varies by manufacturer and requires root. Empty = AT on Android disabled.",
+                "# How AT commands reach the Android modem:",
+                "#   serial = through the PC serial (COM) port the terminal exposes over USB (no root needed)",
+                "#            UNISOC (A910S, A950, A960): \"SPRD LTE AT\" port; Qualcomm (A930): \"Qualcomm HS-USB Modem\"",
+                "#   adb    = writes to the modem device on the terminal via adb shell (uses porta_at_android/su_android)",
+                "modo_at_android=" + PADRAO_MODO_AT_ANDROID,
+                "",
+                "# PC serial port for AT on Android (e.g. COM12). Empty = detect automatically.",
+                "# The port chosen on the main screen takes priority over this value.",
+                "porta_serial_at=" + PADRAO_PORTA_SERIAL_AT,
+                "",
+                "# Serial port speed (8N1, RTS and DTR on)",
+                "baud_serial_at=" + PADRAO_BAUD_SERIAL_AT,
+                "",
+                "# Only used when modo_at_android=adb:",
+                "# Modem serial port on the terminal for AT commands (e.g. /dev/smd11).",
+                "# Varies by manufacturer and requires root. Empty = AT via adb disabled.",
                 "porta_at_android=" + PADRAO_PORTA_AT,
                 "",
                 "# yes = runs the AT line via su -c (needed to access the modem port)",
@@ -111,6 +128,25 @@ public class Configuracao {
     public boolean isSuAndroid() {
         String su = valor("su_android", PADRAO_SU);
         return su.equalsIgnoreCase("yes") || su.equalsIgnoreCase("sim");
+    }
+
+    // Só "adb" volta ao caminho antigo; ausente, vazio ou outro valor = serial (config.txt antigos não têm a chave)
+    public boolean isAtAndroidViaSerial() {
+        return !valor("modo_at_android", PADRAO_MODO_AT_ANDROID).equalsIgnoreCase("adb");
+    }
+
+    public String getPortaSerialAt() {
+        return valor("porta_serial_at", PADRAO_PORTA_SERIAL_AT);
+    }
+
+    // Valor inválido não deve impedir o uso: cai no padrão
+    public int getBaudSerialAt() {
+        try {
+            int baud = Integer.parseInt(valor("baud_serial_at", PADRAO_BAUD_SERIAL_AT));
+            return baud > 0 ? baud : Integer.parseInt(PADRAO_BAUD_SERIAL_AT);
+        } catch (NumberFormatException e) {
+            return Integer.parseInt(PADRAO_BAUD_SERIAL_AT);
+        }
     }
 
     public String getCmdSnAndroid() {

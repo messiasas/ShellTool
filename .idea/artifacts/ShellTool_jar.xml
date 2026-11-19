@@ -3,6 +3,7 @@
     <output-path>$PROJECT_DIR$/out/artifacts/ShellTool_jar</output-path>
     <root id="archive" name="ShellTool.jar">
       <element id="module-output" name="ShellTool" />
+      <element id="extracted-dir" path="$PROJECT_DIR$/lib/jSerialComm-2.11.4.jar" path-in-jar="/" />
     </root>
   </artifact>
 </component>

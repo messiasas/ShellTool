@@ -23,7 +23,9 @@ Criar os testes padrão (pings, rotas, AT…) que vêm prontos com o programa.*/
 public class RepositorioTestes {
 
     private static final String INICIO_BLOCO = "[teste]";
-    private static final String SUFIXO_AT_ANDROID = " (requires root and AT port in config.txt)";
+    private static final String SUFIXO_AT_ANDROID = " (via PC serial port: SPRD LTE AT / Qualcomm modem)";
+    // Texto gravado no testes.txt por versões anteriores, quando o AT no Android só ia por adb + root
+    private static final String SUFIXO_AT_ANDROID_ANTIGO = " (requires root and AT port in config.txt)";
 
     private final Path pasta;
     private final Path arquivo;
@@ -140,7 +142,8 @@ public class RepositorioTestes {
 
         adicionarSeValido(bloco, testes);
 
-        if (completarComPadrao(testes)) {
+        boolean migrou = atualizarSufixoAtAndroid(testes);
+        if (completarComPadrao(testes) || migrou) {
             try {
                 salvar(testes);
             } catch (IOException e) {
@@ -261,6 +264,20 @@ public class RepositorioTestes {
             if (existenteSemRegras && padraoTemRegras) {
                 existente.setRegras(p.getRegras());
                 existente.setInformativo(p.isInformativo());
+                mudou = true;
+            }
+        }
+        return mudou;
+    }
+
+    // Só troca descrições que ainda terminam no texto antigo; o que o usuário reescreveu fica igual
+    private boolean atualizarSufixoAtAndroid(List<Comando> testes) {
+        boolean mudou = false;
+        for (Comando c : testes) {
+            String descricao = c.getDescricao();
+            if (c.getPlataforma() == Plataforma.ANDROID && c.isAt() && descricao.endsWith(SUFIXO_AT_ANDROID_ANTIGO)) {
+                c.setDescricao(descricao.substring(0, descricao.length() - SUFIXO_AT_ANDROID_ANTIGO.length())
+                        + SUFIXO_AT_ANDROID);
                 mudou = true;
             }
         }
@@ -451,6 +468,55 @@ public class RepositorioTestes {
                 "falha_sem=re:\\+CGACT: [0-9]+,1\\b => No active context",
                 "ok=re:\\+CGACT: [0-9]+,1\\b => Data context active");
         novoAt(p, plataforma, "AT - Context address", "AT+CGPADDR", "IP assigned by the carrier to each context" + sufixo,
+                "informativo=sim");
+
+        // Testes gerais de dados (GPRS/pacotes) e de identificação; todos só consultam, nenhum altera o modem
+        novoAt(p, plataforma, "AT - GPRS attach", "AT+CGATT?",
+                "1 = attached to the packet data (GPRS) network" + sufixo,
+                "falha=re:\\+CGATT: 0\\b => Not attached to the data network",
+                "ok=re:\\+CGATT: 1\\b => Attached to the data network");
+        novoAt(p, plataforma, "AT - GPRS registration", "AT+CGREG?",
+                "Registration on the 2G/3G packet data (GPRS) network" + sufixo,
+                "falha=re:\\+CGREG: [0-9],3\\b => Registration denied",
+                "falha=re:\\+CGREG: [0-9],[04]\\b => Not registered",
+                "alerta=re:\\+CGREG: [0-9],2\\b => Searching for network",
+                "ok=re:\\+CGREG: [0-9],[15]\\b => Registered for GPRS");
+        novoAt(p, plataforma, "AT - Data connection details", "AT+CGCONTRDP",
+                "IP, gateway, DNS and APN the carrier gave each active context" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - LTE signal quality", "AT+CESQ",
+                "Last field = RSRP: 0-97 means -140 to -44 dBm, 255 = not on LTE" + sufixo,
+                "alerta=re:\\+CESQ: (\\d+,\\s*){5}255\\b => RSRP unknown (not on LTE)",
+                "alerta=re:\\+CESQ: (\\d+,\\s*){5}([0-9]|[12][0-9]|30)\\b => Weak LTE signal (RSRP below -110 dBm)",
+                "ok=re:\\+CESQ: (\\d+,\\s*){5}(3[1-9]|[4-8][0-9]|9[0-7])\\b => Good LTE signal");
+        novoAt(p, plataforma, "AT - Last error cause", "AT+CEER",
+                "Reason the last call or data connection failed or ended" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - Modem activity", "AT+CPAS",
+                "0 = ready, 1 = unavailable, 2 = unknown, 3 = ringing, 4 = call in progress" + sufixo,
+                "falha=re:\\+CPAS: [12]\\b => Modem unavailable",
+                "ok=re:\\+CPAS: [034]\\b => Modem ready");
+        novoAt(p, plataforma, "AT - SIM PIN lock", "AT+CLCK=\"SC\",2",
+                "1 = SIM asks for the PIN at power-up (query only, does not change the lock)" + sufixo,
+                "alerta=re:\\+CLCK: 1\\b => SIM PIN enabled (terminal will not register after reboot)",
+                "ok=re:\\+CLCK: 0\\b => SIM PIN disabled");
+        novoAt(p, plataforma, "AT - SIM ICCID", "AT+CCID",
+                "SIM card serial number (some modems use AT+ICCID)" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - Phone number", "AT+CNUM",
+                "Number stored on the SIM (often empty)" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - Modem identification", "ATI",
+                "Manufacturer, model and revision in a single reply" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - Network time", "AT+CCLK?",
+                "Modem clock (network time when the carrier sends it)" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - EPS mode", "AT+CEMODE?",
+                "0/2 = data only (PS), 1/3 = voice and data (CS/PS)" + sufixo,
+                "informativo=sim");
+        novoAt(p, plataforma, "AT - Radio connection state", "AT+CSCON?",
+                "Second number: 0 = idle, 1 = connected to the cell" + sufixo,
                 "informativo=sim");
     }
 

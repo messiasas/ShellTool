@@ -18,6 +18,8 @@ import persistencia.RepositorioHistorico;
 import persistencia.RepositorioTestes;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.KeyAdapter;
@@ -27,13 +29,17 @@ import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Collator;
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import conexao.LocalizadorAdb;
@@ -48,6 +54,10 @@ public class TelaPrincipal extends JFrame{
     private DefaultListModel<Comando> modeloLista;
     private JList<Comando> listaComandos;
     private List<Comando> todosComandos = new ArrayList<>();
+    private JTextField campoBusca;
+
+    // Ordem alfabética só na exibição: o testes.txt continua na ordem em que foi gravado
+    private static final Collator ORDEM_NOMES = criarOrdemNomes();
 
     private JTextField campoComando;
     private JTextArea areaDescricao;
@@ -84,6 +94,17 @@ public class TelaPrincipal extends JFrame{
     private String textoAdbAtual;
     private long inicioAdbNanos;
     private final StringBuilder saidaAdb = new StringBuilder();
+
+    // AT do Android pela porta serial do PC: usa o mesmo controle de execução do adb (campos acima)
+    private final ConexaoSerial conexaoSerial = new ConexaoSerial();
+    private boolean execucaoViaSerial = false;
+    private JComboBox<Object> boxPortaSerial;
+    private JButton botaoAtualizarPortas;
+    private boolean listandoPortas = false;
+    // A leitura para assim que chega OK/ERROR; o mínimo cobre comandos lentos com a espera padrão de 2 s
+    private static final int TEMPO_MINIMO_SERIAL_S = 10;
+    // O timerLimite é só uma rede de segurança: a própria leitura serial encerra no tempo máximo
+    private static final int MARGEM_SERIAL_MS = 5_000;
 
     private JTextField campoLivre;
     private JButton botaoEnviarLivre;
@@ -154,7 +175,10 @@ public class TelaPrincipal extends JFrame{
         carregarConfiguracao();
         conexaoAdb = new ConexaoAdb(LocalizadorAdb.resolver(configuracao.getAdb()));
         // Ao fechar o programa, não deixa um adb rodando sozinho
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> conexaoAdb.cancelar()));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            conexaoAdb.cancelar();
+            conexaoSerial.cancelar();
+        }));
 
         JPanel painelTopo = new JPanel(new FlowLayout(FlowLayout.LEFT));
         painelTopo.add(new JLabel("Platform"));
@@ -193,6 +217,23 @@ public class TelaPrincipal extends JFrame{
         labelStatusAndroid = new JLabel(" ");
         cartaoAndroid.add(labelStatusAndroid);
 
+        // Editável: a COM do modem Qualcomm pode não aparecer na lista e ser digitada (ex.: COM12)
+        JLabel rotuloPortaAt = new JLabel("AT port:");
+        boxPortaSerial = new JComboBox<>();
+        boxPortaSerial.setEditable(true);
+        boxPortaSerial.setPrototypeDisplayValue("COM000 - XXXXXXXXXXXXXXXXXXXXXXXXX");
+        boxPortaSerial.setToolTipText("PC serial port used for AT commands (SPRD LTE AT or Qualcomm HS-USB Modem)."
+                + " You can also type it, e.g. COM12.");
+        botaoAtualizarPortas = new JButton("Refresh ports");
+        boolean atViaSerial = configuracao.isAtAndroidViaSerial();
+        rotuloPortaAt.setVisible(atViaSerial);
+        boxPortaSerial.setVisible(atViaSerial);
+        botaoAtualizarPortas.setVisible(atViaSerial);
+        cartaoAndroid.add(Box.createHorizontalStrut(15));
+        cartaoAndroid.add(rotuloPortaAt);
+        cartaoAndroid.add(boxPortaSerial);
+        cartaoAndroid.add(botaoAtualizarPortas);
+
         // CardLayout: um cartão por plataforma no mesmo lugar; show(painel, plataforma.name()) troca o visível
         cartoesConexao = new CardLayout();
         painelConexao = new JPanel(cartoesConexao);
@@ -205,6 +246,21 @@ public class TelaPrincipal extends JFrame{
         modeloLista = new DefaultListModel<>();
         listaComandos = new JList<>(modeloLista);
         JScrollPane scrollLista = new JScrollPane(listaComandos);
+        listaComandos.setCellRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> lista, Object valor, int indice,
+                                                          boolean selecionado, boolean comFoco) {
+                super.getListCellRendererComponent(lista, valor, indice, selecionado, comFoco);
+                // Na busca a lista mistura cadernos: mostra de qual caderno vem cada teste de fora
+                if (valor instanceof Comando && termosBusca().length > 0) {
+                    Comando c = (Comando) valor;
+                    if (!c.getCaderno().equals(cadernoSelecionado())) {
+                        setText(c.getNome() + "  [" + c.getCaderno() + "]");
+                    }
+                }
+                return this;
+            }
+        });
 
         // Caixa de cadernos acima da lista: a lista mostra só os testes do caderno e da plataforma escolhidos
         JPanel painelCaderno = new JPanel(new BorderLayout(4, 2));
@@ -215,9 +271,61 @@ public class TelaPrincipal extends JFrame{
         botaoNovoCaderno.setToolTipText("Create a new notebook");
         painelCaderno.add(botaoNovoCaderno, BorderLayout.EAST);
 
+        JPanel painelBusca = new JPanel(new BorderLayout(4, 2));
+        painelBusca.add(new JLabel("Search"), BorderLayout.NORTH);
+        campoBusca = new JTextField();
+        campoBusca.setToolTipText("Filters by name, description or command in all notebooks of this platform."
+                + " Several words = tests containing all of them. Esc clears.");
+        painelBusca.add(campoBusca, BorderLayout.CENTER);
+        JButton botaoLimparBusca = new JButton("X");
+        botaoLimparBusca.setToolTipText("Clear search");
+        botaoLimparBusca.setMargin(new Insets(2, 6, 2, 6));
+        painelBusca.add(botaoLimparBusca, BorderLayout.EAST);
+
+        JPanel painelFiltros = new JPanel(new BorderLayout(0, 6));
+        painelFiltros.add(painelCaderno, BorderLayout.NORTH);
+        painelFiltros.add(painelBusca, BorderLayout.SOUTH);
+
+        // A cada tecla a lista é refeita: com poucas centenas de testes isso é instantâneo
+        campoBusca.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                atualizarLista();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                atualizarLista();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                atualizarLista();
+            }
+        });
+        campoBusca.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_ESCAPE) {
+                    campoBusca.setText("");
+                }
+            }
+        });
+        // Enter seleciona o primeiro resultado e leva o foco para a lista
+        campoBusca.addActionListener(e -> {
+            if (!modeloLista.isEmpty()) {
+                listaComandos.setSelectedIndex(0);
+                listaComandos.requestFocusInWindow();
+            }
+        });
+        botaoLimparBusca.addActionListener(e -> {
+            campoBusca.setText("");
+            campoBusca.requestFocusInWindow();
+        });
+
         JPanel painelLista = new JPanel(new BorderLayout(0, 4));
         painelLista.setBorder(BorderFactory.createEmptyBorder(4, 4, 0, 0));
-        painelLista.add(painelCaderno, BorderLayout.NORTH);
+        painelLista.add(painelFiltros, BorderLayout.NORTH);
         painelLista.add(scrollLista, BorderLayout.CENTER);
         painelLista.setPreferredSize(new Dimension(220, 0));
         add(painelLista, BorderLayout.WEST);
@@ -331,6 +439,11 @@ public class TelaPrincipal extends JFrame{
         boxCaderno.addActionListener(e -> atualizarLista());
         botaoNovoCaderno.addActionListener(e -> criarCaderno());
         botaoAtualizar.addActionListener(e -> atualizarDispositivos());
+        botaoAtualizarPortas.addActionListener(e -> atualizarPortasSerial());
+        boxPortaSerial.addActionListener(e -> {
+            atualizarDicaAt();
+            mostrarDetalhes();
+        });
         listaComandos.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 mostrarDetalhes();
@@ -403,6 +516,9 @@ public class TelaPrincipal extends JFrame{
         atualizarDicaAt();
         if (plataforma == Plataforma.ANDROID) {
             atualizarDispositivos();
+            if (configuracao.isAtAndroidViaSerial()) {
+                atualizarPortasSerial();
+            }
         }
     }
 
@@ -414,8 +530,101 @@ public class TelaPrincipal extends JFrame{
         if (plataforma == Plataforma.PROLIN) {
             return MontadorComandoAT.PORTA_AT;
         }
+        if (configuracao.isAtAndroidViaSerial()) {
+            String serial = portaSerialEscolhida();
+            return serial.isEmpty() ? "(no serial AT port found)" : serial;
+        }
         String porta = configuracao.getPortaAtAndroid();
         return porta.isEmpty() ? "(not configured in config.txt)" : porta;
+    }
+
+    // Combo primeiro (item da lista ou COM digitada); vazio cai no porta_serial_at do config.txt
+    private String portaSerialEscolhida() {
+        // Lê o editor: o texto digitado só vira item selecionado depois de Enter ou perda de foco
+        Object item = boxPortaSerial.getEditor().getItem();
+        String nome = "";
+        if (item instanceof ConexaoSerial.Porta) {
+            nome = ((ConexaoSerial.Porta) item).nome;
+        } else if (item != null) {
+            // Aceita "COM12" ou o texto de um item, "COM12 - descrição"
+            String texto = item.toString().trim();
+            int espaco = texto.indexOf(' ');
+            nome = espaco < 0 ? texto : texto.substring(0, espaco);
+        }
+        return nome.isEmpty() ? configuracao.getPortaSerialAt() : nome;
+    }
+
+    private void atualizarPortasSerial() {
+        if (listandoPortas) {
+            return;
+        }
+        listandoPortas = true;
+        botaoAtualizarPortas.setEnabled(false);
+
+        // A listagem consulta o Windows: fora da EDT, como a listagem do adb
+        new Thread(() -> {
+            try {
+                List<ConexaoSerial.Porta> portas = ConexaoSerial.listarPortas();
+                SwingUtilities.invokeLater(() -> mostrarPortasSerial(portas));
+            } catch (IOException ex) {
+                SwingUtilities.invokeLater(() -> {
+                    terminarListagemPortas();
+                    JOptionPane.showMessageDialog(this, ex.getMessage(), "Serial ports",
+                            JOptionPane.ERROR_MESSAGE);
+                });
+            }
+        }).start();
+    }
+
+    private void terminarListagemPortas() {
+        listandoPortas = false;
+        botaoAtualizarPortas.setEnabled(true);
+    }
+
+    /* Escolha após atualizar: a do usuário (se ainda listada, ou se foi digitada à mão),
+    senão a porta_serial_at do config.txt, senão a detectada. Nunca pré-seleciona uma porta que não seja AT. */
+    private void mostrarPortasSerial(List<ConexaoSerial.Porta> portas) {
+        terminarListagemPortas();
+        Object anterior = boxPortaSerial.getEditor().getItem();
+        String nomeAnterior = (anterior instanceof ConexaoSerial.Porta) ? ((ConexaoSerial.Porta) anterior).nome : "";
+        String digitada = (anterior instanceof String) ? ((String) anterior).trim() : "";
+
+        boxPortaSerial.removeAllItems();
+        for (ConexaoSerial.Porta p : portas) {
+            boxPortaSerial.addItem(p);
+        }
+
+        Object escolha = portaComNome(portas, nomeAnterior);
+        if (escolha == null && !digitada.isEmpty()) {
+            escolha = portaComNome(portas, digitada);
+            if (escolha == null) {
+                escolha = digitada;
+            }
+        }
+        String configurada = configuracao.getPortaSerialAt();
+        if (escolha == null && !configurada.isEmpty()) {
+            escolha = portaComNome(portas, configurada);
+            if (escolha == null) {
+                escolha = configurada;
+            }
+        }
+        if (escolha == null) {
+            escolha = ConexaoSerial.detectarPortaAt(portas);
+        }
+        boxPortaSerial.setSelectedItem(escolha);
+        if (escolha == null) {
+            boxPortaSerial.getEditor().setItem("");
+        }
+        atualizarDicaAt();
+    }
+
+    private static ConexaoSerial.Porta portaComNome(List<ConexaoSerial.Porta> portas, String nome) {
+        for (ConexaoSerial.Porta p : portas) {
+            if (p.nome.equalsIgnoreCase(nome)) {
+                return p;
+            }
+        }
+        return null;
     }
 
     private void atualizarDispositivos() {
@@ -509,8 +718,12 @@ public class TelaPrincipal extends JFrame{
         atualizarStatusAndroid(false, "adb set - click Refresh");
     }
 
-    private boolean destinoPronto(Plataforma plataforma) {
+    private boolean destinoPronto(Plataforma plataforma, TipoComando tipo) {
         if (plataforma == Plataforma.ANDROID) {
+            // AT pela serial não passa pelo adb: não exige dispositivo; a porta é verificada ao executar
+            if (tipo == TipoComando.AT && configuracao.isAtAndroidViaSerial()) {
+                return true;
+            }
             if (serialSelecionado() == null) {
                 JOptionPane.showMessageDialog(this,
                         "Select an Android device (use \"Refresh\" to search).");
@@ -674,16 +887,67 @@ public class TelaPrincipal extends JFrame{
         return null;
     }
 
+    /* Sem busca: testes do caderno e da plataforma escolhidos. Com busca: todos os cadernos da plataforma,
+    para achar um teste sem saber em que caderno ele está. Em ambos os casos, em ordem alfabética. */
     private void atualizarLista(){
         Plataforma escolhida = (Plataforma) boxPlataforma.getSelectedItem();
         String caderno = cadernoSelecionado();
-        modeloLista.clear();
+        String[] termos = termosBusca();
 
+        List<Comando> visiveis = new ArrayList<>();
         for(Comando c: todosComandos){
-            if(c.getPlataforma() == escolhida && c.getCaderno().equals(caderno)){
-                modeloLista.addElement(c);
+            if (c.getPlataforma() != escolhida) {
+                continue;
+            }
+            boolean entra = (termos.length == 0) ? c.getCaderno().equals(caderno) : correspondeBusca(c, termos);
+            if (entra) {
+                visiveis.add(c);
             }
         }
+        visiveis.sort(Comparator.comparing(Comando::getNome, ORDEM_NOMES));
+
+        modeloLista.clear();
+        for (Comando c : visiveis) {
+            modeloLista.addElement(c);
+        }
+    }
+
+    // SECONDARY: ignora maiúsculas/minúsculas, mas ainda separa "a" de "á" para desempatar
+    private static Collator criarOrdemNomes() {
+        Collator ordem = Collator.getInstance(new Locale("pt", "BR"));
+        ordem.setStrength(Collator.SECONDARY);
+        return ordem;
+    }
+
+    private String[] termosBusca() {
+        String texto = normalizarBusca(campoBusca.getText()).trim();
+        return texto.isEmpty() ? new String[0] : texto.split("\\s+");
+    }
+
+    // Cada palavra precisa aparecer em algum lugar: nome, descrição ou o próprio comando (ex.: "csq")
+    private static boolean correspondeBusca(Comando c, String[] termos) {
+        String alvo = normalizarBusca(c.getNome() + " " + c.getDescricao() + " " + c.getTxtComando());
+        for (String termo : termos) {
+            if (!alvo.contains(termo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Minúsculas e sem acento: "versao" acha "versão" e vice-versa
+    private static String normalizarBusca(String texto) {
+        String semAcento = Normalizer.normalize(texto == null ? "" : texto, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return semAcento.toLowerCase(Locale.ROOT);
+    }
+
+    // Se a busca esconder o teste recém-salvo/editado, limpa a busca para ele aparecer selecionado
+    private void selecionarNaLista(Comando c) {
+        if (!modeloLista.contains(c) && !campoBusca.getText().isEmpty()) {
+            campoBusca.setText("");
+        }
+        listaComandos.setSelectedValue(c, true);
     }
     private void mostrarDetalhes() {
         Comando selecionado = listaComandos.getSelectedValue();
@@ -712,7 +976,7 @@ public class TelaPrincipal extends JFrame{
         }
 
         Plataforma plataforma = selecionado.getPlataforma();
-        if (!destinoPronto(plataforma)) {
+        if (!destinoPronto(plataforma, selecionado.getTipo())) {
             return;
         }
 
@@ -733,11 +997,11 @@ public class TelaPrincipal extends JFrame{
         }
 
         Plataforma plataforma = plataformaSelecionada();
-        if (!destinoPronto(plataforma)) {
+        TipoComando tipo = caixaAt.isSelected() ? TipoComando.AT : TipoComando.SHELL;
+        if (!destinoPronto(plataforma, tipo)) {
             return;
         }
 
-        TipoComando tipo = caixaAt.isSelected() ? TipoComando.AT : TipoComando.SHELL;
         if (executar(plataforma, serialSelecionado(), texto, tipo, Comando.ESPERA_PADRAO,
                 null, "Custom: " + cortar(texto, 40), null)) {
             campoLivre.setText("");
@@ -790,13 +1054,22 @@ public class TelaPrincipal extends JFrame{
 
     private boolean executarAdb(String serial, String textoComando, TipoComando tipo, int esperaSegundos,
                                 Comando teste, String nomeExibicao, String identificacao) {
+        if (tipo == TipoComando.AT && configuracao.isAtAndroidViaSerial()) {
+            return executarSerial(textoComando, esperaSegundos, teste, nomeExibicao, identificacao);
+        }
         String linhaShell = textoComando;
         String textoExibido = textoComando;
         int tempoLimite = TEMPO_LIMITE_MS;
         if (tipo == TipoComando.AT) {
             String porta = configuracao.getPortaAtAndroid();
             if (porta.isEmpty()) {
-                registrarAtNaoConfigurado(textoComando, nomeExibicao);
+                registrarAtNaoConfigurado(textoComando, nomeExibicao, "AT not configured",
+                        "AT on Android not configured",
+                        "AT commands via adb require root and the modem serial port,\n"
+                                + "which varies by manufacturer (e.g. /dev/smd11, /dev/ttyUSB2...).\n\n"
+                                + "Set the \"porta_at_android\" key (and, if needed, su_android=yes) in:\n"
+                                + configuracao.getArquivo() + "\nand restart the program.\n\n"
+                                + "To use the PC serial port instead, set modo_at_android=serial.");
                 return false;
             }
             linhaShell = MontadorComandoAT.montarLinha(textoComando, esperaSegundos, porta);
@@ -822,7 +1095,47 @@ public class TelaPrincipal extends JFrame{
             return false;
         }
 
+        iniciarExecucaoAndroid(false, numero, textoExibido, tipo, teste, nomeExibicao, identificacao, tempoLimite);
+        return true;
+    }
+
+    // AT pela porta serial do PC; a saída passa pelo mesmo receberAdb (número da execução, avisos atrasados)
+    private boolean executarSerial(String comandoAt, int esperaSegundos, Comando teste,
+                                   String nomeExibicao, String identificacao) {
+        String porta = portaSerialEscolhida();
+        if (porta.isEmpty()) {
+            registrarAtNaoConfigurado(comandoAt, nomeExibicao, "AT port not found",
+                    "AT serial port not found", mensagemHabilitarPortaAt());
+            return false;
+        }
+        int tempoMaximo = Math.max(esperaSegundos, TEMPO_MINIMO_SERIAL_S);
+        String textoExibido = MontadorComandoAT.textoExibicao(comandoAt, porta);
+
+        int numero = ++contadorExecucao;
+        garantirQuebraDeLinha();
+        exibirTexto("> " + textoExibido + "\n");
+
+        try {
+            // Os avisos chegam na thread de leitura da serial; invokeLater os leva para a EDT
+            conexaoSerial.executar(porta, configuracao.getBaudSerialAt(), comandoAt, tempoMaximo,
+                    texto -> SwingUtilities.invokeLater(() -> receberAdb(numero, texto)),
+                    status -> SwingUtilities.invokeLater(() -> terminarSerial(numero, status)));
+        } catch (IOException ex) {
+            exibirTexto("[Error: " + ex.getMessage() + "]\n");
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Serial port " + porta,
+                    JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+
+        iniciarExecucaoAndroid(true, numero, textoExibido, TipoComando.AT, teste, nomeExibicao, identificacao,
+                tempoMaximo * 1000 + MARGEM_SERIAL_MS);
+        return true;
+    }
+
+    private void iniciarExecucaoAndroid(boolean viaSerial, int numero, String textoExibido, TipoComando tipo,
+                                        Comando teste, String nomeExibicao, String identificacao, int tempoLimite) {
         adbEmAndamento = true;
+        execucaoViaSerial = viaSerial;
         numeroAdbAtual = numero;
         textoAdbAtual = textoExibido;
         inicioAdbNanos = System.nanoTime();
@@ -834,7 +1147,15 @@ public class TelaPrincipal extends JFrame{
         timerLimite.setInitialDelay(tempoLimite);
         timerLimite.restart();
         atualizarBotoesExecucao();
-        return true;
+    }
+
+    // Cancelar/tempo esgotado: interrompe quem estiver rodando a execução Android atual
+    private void cancelarProcessoAndroid() {
+        if (execucaoViaSerial) {
+            conexaoSerial.cancelar();
+        } else {
+            conexaoAdb.cancelar();
+        }
     }
 
     private void receberAdb(int numero, String texto) {
@@ -854,35 +1175,58 @@ public class TelaPrincipal extends JFrame{
         finalizarAdb(StatusExecucao.CONCLUIDO, codigo);
     }
 
+    // Na serial o fim é a linha final do modem (CONCLUIDO) ou o tempo máximo da leitura (TEMPO_ESGOTADO)
+    private void terminarSerial(int numero, StatusExecucao status) {
+        // Aviso atrasado de uma execução já encerrada (cancelada/tempo esgotado): descarta
+        if (!adbEmAndamento || numero != numeroAdbAtual) {
+            return;
+        }
+        finalizarAdb(status, null);
+    }
+
     private void finalizarAdb(StatusExecucao status, Integer codigo) {
         adbEmAndamento = false;
         long duracaoMs = (System.nanoTime() - inicioAdbNanos) / 1_000_000;
         encerrarExecucao(new ResultadoExecucao(textoAdbAtual, saidaAdb.toString(), codigo, duracaoMs, status));
     }
 
-    private void registrarAtNaoConfigurado(String comandoAt, String nomeExibicao) {
+    // Registra na tabela que o AT não foi enviado e explica como resolver (o texto depende do modo)
+    private void registrarAtNaoConfigurado(String comandoAt, String nomeExibicao, String detalhe,
+                                           String titulo, String mensagem) {
         garantirQuebraDeLinha();
-        exibirTexto("> " + comandoAt.trim() + "\n[AT not configured]\n");
+        exibirTexto("> " + comandoAt.trim() + "\n[" + detalhe + "]\n");
 
         ResultadoExecucao resultado = new ResultadoExecucao(comandoAt.trim(), "", null, 0, StatusExecucao.CONCLUIDO);
         ExecucaoAvaliada execucao = new ExecucaoAvaliada(LocalTime.now().withNano(0), nomeExibicao,
-                resultado, new ResultadoAvaliado(Veredito.INFO, "AT not configured"));
+                resultado, new ResultadoAvaliado(Veredito.INFO, detalhe));
         adicionarNaTabela(execucao);
         if (registroAtual != null) {
             registroAtual.adicionar(execucao);
         }
 
-        JOptionPane.showMessageDialog(this,
-                "AT commands on Android require root and the modem serial port,\n"
-                        + "which varies by manufacturer (e.g. /dev/smd11, /dev/ttyUSB2...).\n\n"
-                        + "Set the \"porta_at_android\" key (and, if needed, su_android=yes) in:\n"
-                        + configuracao.getArquivo() + "\nand restart the program.",
-                "AT on Android not configured", JOptionPane.WARNING_MESSAGE);
+        JOptionPane.showMessageDialog(this, mensagem, titulo, JOptionPane.WARNING_MESSAGE);
+    }
+
+    // Passos oficiais da PAX para o modem aparecer como porta COM no PC
+    private String mensagemHabilitarPortaAt() {
+        return "No AT serial port was found on this PC.\n\n"
+                + "UNISOC terminals (A910S, A950, A960):\n"
+                + "  1. On the terminal, open YLog and enable \"Modem to PC\" / \"CP Log to PC\".\n"
+                + "  2. Set the USB mode to \"SPRD USB MODE\".\n"
+                + "  3. Windows shows several SPRD ports; only \"SPRD LTE AT\" accepts AT commands\n"
+                + "     (not SPRD AT, SPRD DIAG, SPRD LOG, SPRD LTE DIAG, SPRD LTE LOG or SPRD WCN AT).\n\n"
+                + "Qualcomm terminals (A930):\n"
+                + "  1. Run: pax_adb systool qcom\n"
+                + "  2. \"Qualcomm HS-USB Modem 9091\" appears under Modems in Device Manager;\n"
+                + "     its COM number is in Properties > Modem. Do not use \"Qualcomm HS-USB Diagnostics\".\n\n"
+                + "Then click \"Refresh ports\". If the port is still not listed, type it (e.g. COM12)\n"
+                + "in the \"AT port\" box or set porta_serial_at in:\n"
+                + configuracao.getArquivo();
     }
 
     private void cancelarExecucao() {
         if (adbEmAndamento) {
-            conexaoAdb.cancelar();
+            cancelarProcessoAndroid();
             finalizarAdb(StatusExecucao.CANCELADO, null);
             return;
         }
@@ -900,7 +1244,7 @@ public class TelaPrincipal extends JFrame{
     private void finalizarExecucao(StatusExecucao status) {
         if (adbEmAndamento) {
             if (status == StatusExecucao.TEMPO_ESGOTADO) {
-                conexaoAdb.cancelar();
+                cancelarProcessoAndroid();
                 finalizarAdb(status, null);
             }
             return;
@@ -946,7 +1290,9 @@ public class TelaPrincipal extends JFrame{
         switch (resultado.getStatus()) {
             case CONCLUIDO:
                 String segundos = RepositorioHistorico.segundos(resultado.getDuracaoMs());
-                rodape = "[end | exit code " + resultado.getCodigoSaida() + " | " + segundos + " s]";
+                rodape = (resultado.getCodigoSaida() == null)
+                        ? "[end | " + segundos + " s]"
+                        : "[end | exit code " + resultado.getCodigoSaida() + " | " + segundos + " s]";
                 break;
             case TEMPO_ESGOTADO:
                 rodape = "[timed out]";
@@ -1182,7 +1528,7 @@ public class TelaPrincipal extends JFrame{
             return;
         }
         Plataforma plataforma = plataformaSelecionada();
-        if (!destinoPronto(plataforma)) {
+        if (!destinoPronto(plataforma, TipoComando.SHELL)) {
             return;
         }
         if (emExecucao()) {
@@ -1358,7 +1704,7 @@ public class TelaPrincipal extends JFrame{
 
         todosComandos = novaLista;
         atualizarLista();
-        listaComandos.setSelectedValue(novo, true);
+        selecionarNaLista(novo);
     }
 
     private void editarTeste() {
@@ -1450,7 +1796,7 @@ public class TelaPrincipal extends JFrame{
             boxCaderno.setSelectedItem(editado.getCaderno());
         }
         atualizarLista();
-        listaComandos.setSelectedValue(editado, true);
+        selecionarNaLista(editado);
     }
 
     private boolean existeOutroComNome(String nome, Plataforma plataforma, Comando ignorar) {
